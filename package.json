@@ -1,0 +1,28 @@
+{
+  "name": "flywheel-emulator",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Web-based emulator and development environment for the Flywheel handheld (ESP32-S3).",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @flywheel/web",
+    "build": "npm run build --workspace @flywheel/web",
+    "preview": "npm run preview --workspace @flywheel/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "format:check": "prettier --check \"packages/*/src/**/*.{ts,tsx,css}\"",
+    "format": "prettier --write \"packages/*/src/**/*.{ts,tsx,css}\""
+  },
+  "devDependencies": {
+    "prettier": "^3.3.3",
+    "typescript": "^5.6.2",
+    "vitest": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

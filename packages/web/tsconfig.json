@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "noEmit": true,
+    "types": ["vite/client", "node"],
+    "baseUrl": ".",
+    "paths": {
+      "@flywheel/emulator-core": ["../emulator-core/src/index.ts"],
+      "@flywheel/emulator-core/*": ["../emulator-core/src/*"]
+    }
+  },
+  "include": ["src", "vite.config.ts"]
+}

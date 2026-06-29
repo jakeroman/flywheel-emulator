@@ -1,0 +1,60 @@
+.fw-app {
+  display: grid;
+  grid-template-columns: 1fr minmax(300px, 360px);
+  grid-template-rows: auto 1fr;
+  grid-template-areas:
+    "header panel"
+    "stage  panel";
+  height: 100%;
+}
+
+.fw-app__header {
+  grid-area: header;
+  padding: var(--fw-space-4) var(--fw-space-6);
+}
+.fw-app__title {
+  margin: 0;
+  font-size: var(--fw-fs-lg);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.fw-app__subtitle {
+  margin: 2px 0 0;
+  font-size: var(--fw-fs-sm);
+  color: var(--fw-text-dim);
+}
+
+.fw-app__stage {
+  grid-area: stage;
+  display: grid;
+  place-items: center;
+  padding: var(--fw-space-5);
+  min-height: 0;
+  overflow: auto;
+}
+
+.fw-app__panel {
+  grid-area: panel;
+  min-height: 0;
+}
+
+/* Stack the panel under the device on narrow viewports. */
+@media (max-width: 760px) {
+  .fw-app {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto;
+    grid-template-areas:
+      "header"
+      "stage"
+      "panel";
+    height: auto;
+    min-height: 100%;
+  }
+  .fw-app__panel {
+    height: auto;
+  }
+  .fw-devpanel {
+    border-left: none;
+    border-top: 1px solid var(--fw-border);
+  }
+}

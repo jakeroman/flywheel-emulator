@@ -1,0 +1,186 @@
+.fw-devpanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--fw-space-4);
+  height: 100%;
+  padding: var(--fw-space-4);
+  overflow-y: auto;
+  background: var(--fw-panel);
+  border-left: 1px solid var(--fw-border);
+}
+
+.fw-devpanel__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.fw-devpanel__title {
+  margin: 0;
+  font-size: var(--fw-fs-sm);
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--fw-text);
+}
+.fw-devpanel__phase {
+  font-size: var(--fw-fs-xs);
+  color: var(--fw-text-faint);
+  font-family: var(--fw-font-mono);
+}
+
+/* ---- Sections -------------------------------------------------------- */
+.fw-section {
+  padding: var(--fw-space-3);
+  border-radius: var(--fw-radius-panel);
+  background: var(--fw-panel-raised);
+  border: 1px solid var(--fw-border-soft);
+}
+.fw-section--muted {
+  opacity: 0.7;
+}
+.fw-section__title {
+  margin: 0 0 var(--fw-space-3);
+  font-size: var(--fw-fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fw-text-dim);
+}
+.fw-section__note {
+  margin: 0;
+  font-size: var(--fw-fs-sm);
+  color: var(--fw-text-faint);
+}
+
+/* ---- Stat lists ------------------------------------------------------ */
+.fw-stat {
+  margin: 0;
+  display: grid;
+  gap: var(--fw-space-2);
+}
+.fw-stat--compact {
+  margin-top: var(--fw-space-3);
+  grid-template-columns: 1fr 1fr;
+}
+.fw-stat__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--fw-space-3);
+}
+.fw-stat__row dt {
+  font-size: var(--fw-fs-sm);
+  color: var(--fw-text-dim);
+}
+.fw-stat__row dd {
+  margin: 0;
+  font-family: var(--fw-font-mono);
+  font-size: var(--fw-fs-sm);
+  color: var(--fw-text);
+}
+
+.fw-pill {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: var(--fw-fs-xs);
+  font-weight: 600;
+  background: var(--fw-panel-inset);
+  color: var(--fw-text-dim);
+}
+.fw-pill--on {
+  background: rgba(95, 208, 138, 0.15);
+  color: var(--fw-accent-power);
+}
+
+.fw-net--pos {
+  color: var(--fw-accent-power);
+}
+.fw-net--neg {
+  color: #e08a7a;
+}
+
+/* ---- Battery bar ----------------------------------------------------- */
+.fw-battery {
+  height: 12px;
+  border-radius: 6px;
+  background: var(--fw-panel-inset);
+  box-shadow: var(--fw-shadow-inset);
+  overflow: hidden;
+  margin-bottom: var(--fw-space-3);
+}
+.fw-battery__fill {
+  height: 100%;
+  background: linear-gradient(90deg, #6c7480, #aab2bf);
+  transition: width 0.3s ease;
+}
+.fw-battery__fill.is-charging {
+  background: linear-gradient(
+    90deg,
+    var(--fw-accent-solar-dim),
+    var(--fw-accent-solar)
+  );
+}
+
+/* ---- Form controls --------------------------------------------------- */
+.fw-field {
+  display: block;
+  margin-bottom: var(--fw-space-3);
+}
+.fw-field__label {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--fw-fs-sm);
+  color: var(--fw-text-dim);
+  margin-bottom: var(--fw-space-1);
+}
+.fw-field__label em {
+  font-style: normal;
+  font-family: var(--fw-font-mono);
+  color: var(--fw-text);
+}
+.fw-field input[type="range"] {
+  width: 100%;
+  accent-color: var(--fw-accent-solar);
+}
+
+.fw-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--fw-space-2);
+  font-size: var(--fw-fs-sm);
+  color: var(--fw-text-dim);
+  cursor: pointer;
+}
+.fw-toggle input {
+  accent-color: var(--fw-accent-solar);
+}
+
+/* ---- SD tree --------------------------------------------------------- */
+.fw-tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-family: var(--fw-font-mono);
+  font-size: var(--fw-fs-sm);
+}
+.fw-tree__row {
+  display: flex;
+  align-items: center;
+  gap: var(--fw-space-2);
+  padding-block: 2px;
+  color: var(--fw-text-dim);
+}
+.fw-tree__glyph {
+  color: var(--fw-text-faint);
+  width: 10px;
+}
+.fw-tree__name {
+  color: var(--fw-text);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fw-tree__size {
+  color: var(--fw-text-faint);
+  font-size: var(--fw-fs-xs);
+}

@@ -1,0 +1,166 @@
+.fw-gamepad {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-areas:
+    "dpad face"
+    "system system";
+  align-items: center;
+  gap: var(--fw-space-5);
+  width: 100%;
+  padding: 0 var(--fw-space-3);
+}
+
+/* ---- Shared button surface ------------------------------------------- */
+.fw-btn {
+  position: relative;
+  border: none;
+  color: var(--fw-btn-label);
+  background: linear-gradient(
+    180deg,
+    var(--fw-btn-face-hi),
+    var(--fw-btn-face) 55%,
+    var(--fw-btn-face-lo)
+  );
+  box-shadow:
+    var(--fw-shadow-btn),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  transition:
+    transform var(--fw-press-time) ease,
+    box-shadow var(--fw-press-time) ease,
+    filter var(--fw-press-time) ease;
+  touch-action: none;
+  user-select: none;
+}
+.fw-btn.is-pressed {
+  transform: translateY(1px) scale(0.97);
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.6);
+  filter: brightness(0.9);
+}
+
+/* ---- D-pad ----------------------------------------------------------- */
+.fw-dpad {
+  grid-area: dpad;
+  justify-self: center;
+  display: grid;
+  grid-template-columns: repeat(3, 34px);
+  grid-template-rows: repeat(3, 34px);
+  grid-template-areas:
+    ".    up    ."
+    "left ctr   right"
+    ".    down  .";
+}
+.fw-dpad__btn {
+  display: grid;
+  place-items: center;
+  background: linear-gradient(
+    180deg,
+    var(--fw-btn-face-hi),
+    var(--fw-btn-face-lo)
+  );
+}
+.fw-dpad__up {
+  grid-area: up;
+  border-radius: 7px 7px 0 0;
+}
+.fw-dpad__down {
+  grid-area: down;
+  border-radius: 0 0 7px 7px;
+}
+.fw-dpad__left {
+  grid-area: left;
+  border-radius: 7px 0 0 7px;
+}
+.fw-dpad__right {
+  grid-area: right;
+  border-radius: 0 7px 7px 0;
+}
+.fw-dpad__center {
+  grid-area: ctr;
+  background: var(--fw-btn-face);
+  box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.5);
+}
+
+.fw-chevron {
+  width: 0;
+  height: 0;
+  border: 6px solid transparent;
+}
+.fw-chevron--up {
+  border-bottom-color: var(--fw-btn-label);
+  margin-top: -3px;
+}
+.fw-chevron--down {
+  border-top-color: var(--fw-btn-label);
+  margin-bottom: -3px;
+}
+.fw-chevron--left {
+  border-right-color: var(--fw-btn-label);
+  margin-left: -3px;
+}
+.fw-chevron--right {
+  border-left-color: var(--fw-btn-label);
+  margin-right: -3px;
+}
+
+/* ---- Face buttons (A / B) -------------------------------------------- */
+.fw-face {
+  grid-area: face;
+  justify-self: center;
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  align-items: center;
+  gap: var(--fw-space-3);
+  /* Diagonal offset: B sits lower-left, A upper-right. */
+  transform: rotate(-18deg);
+}
+.fw-face__btn {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  font-weight: 700;
+  font-size: var(--fw-fs-lg);
+  letter-spacing: 0.02em;
+  transform: rotate(18deg); /* counter-rotate the label upright */
+}
+.fw-face__a {
+  align-self: flex-start;
+  background: radial-gradient(
+    circle at 35% 30%,
+    var(--fw-accent-a),
+    #a83942 90%
+  );
+  color: #fff;
+}
+.fw-face__b {
+  align-self: flex-end;
+  background: radial-gradient(
+    circle at 35% 30%,
+    var(--fw-accent-b),
+    #2f6685 90%
+  );
+  color: #fff;
+}
+.fw-face__a.is-pressed,
+.fw-face__b.is-pressed {
+  transform: rotate(18deg) translateY(1px) scale(0.95);
+}
+
+/* ---- System buttons (Menu / Select) ---------------------------------- */
+.fw-system {
+  grid-area: system;
+  justify-self: center;
+  display: flex;
+  gap: var(--fw-space-4);
+}
+.fw-system__btn {
+  min-width: 78px;
+  padding: 7px 14px;
+  border-radius: 14px;
+  font-size: var(--fw-fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  transform: rotate(-20deg);
+}
+.fw-system__btn.is-pressed {
+  transform: rotate(-20deg) translateY(1px) scale(0.97);
+}

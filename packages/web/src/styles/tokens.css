@@ -1,0 +1,98 @@
+/*
+ * Flywheel emulator design tokens.
+ *
+ * One source of truth for the device's look. The aesthetic: a premium solar
+ * handheld photographed on a dark studio backdrop. The star is the Sharp
+ * reflective memory display — dark ink on a pale greenish-grey ground — set
+ * into a graphite shell with tactile buttons.
+ */
+:root {
+  /* ---- Reflective monochrome display ---------------------------------- */
+  /* "Off" pixels are the pale reflective ground; "on" pixels are dark ink. */
+  --fw-display-ground: #c4c9b7;
+  --fw-display-ground-edge: #b3b9a6; /* subtle vignette toward the bezel */
+  --fw-display-ink: #1d231a;
+  --fw-display-ink-soft: #3b4234; /* dimmed ink / sub-pixel bleed */
+  --fw-display-glare: rgba(255, 255, 255, 0.12); /* sheen sweep across glass */
+  --fw-display-bezel: #101109;
+  --fw-display-bezel-hi: #2a2c20;
+
+  /* ---- Device shell --------------------------------------------------- */
+  --fw-shell: #2b2f37;
+  --fw-shell-hi: #3b414c; /* top-left bevel highlight */
+  --fw-shell-lo: #1c1f25; /* bottom-right bevel shadow */
+  --fw-shell-edge: #0c0e12;
+  --fw-shell-label: #c8cdd7; /* silkscreen text on the shell */
+  --fw-shell-label-dim: #9aa0ab; /* functional labels (OFF/ON, model) — AA on shell */
+  --fw-shell-engrave: rgba(0, 0, 0, 0.45); /* engraved label shadow */
+
+  /* ---- Buttons -------------------------------------------------------- */
+  --fw-btn-face: #3d424c;
+  --fw-btn-face-hi: #4b515b;
+  --fw-btn-face-lo: #21252b;
+  --fw-btn-press: #191c21;
+  --fw-btn-label: #b0b6c0;
+  --fw-btn-ring: rgba(0, 0, 0, 0.5);
+
+  /* ---- Accents -------------------------------------------------------- */
+  --fw-accent-solar: #f3a51f; /* solar / charge amber */
+  --fw-accent-solar-dim: #8a6418;
+  --fw-accent-a: #e2545b; /* A button face */
+  --fw-accent-b: #4a8fb5; /* B button face */
+  --fw-accent-power: #5fd08a; /* power-on indicator green */
+
+  /* ---- App backdrop & dev surfaces ------------------------------------ */
+  --fw-bg-0: #0c0d10;
+  --fw-bg-1: #14161b;
+  --fw-bg: radial-gradient(
+    120% 100% at 30% 0%,
+    var(--fw-bg-1) 0%,
+    var(--fw-bg-0) 70%
+  );
+  --fw-panel: #15171c;
+  --fw-panel-raised: #1b1e24;
+  --fw-panel-inset: #101216;
+  --fw-border: #292d35;
+  --fw-border-soft: #21242b;
+
+  /* ---- Text ----------------------------------------------------------- */
+  --fw-text: #d8dce3;
+  --fw-text-dim: #8b93a0;
+  --fw-text-faint: #868d98; /* informational small text — AA on panel surfaces */
+  --fw-text-on-accent: #14161b;
+
+  /* ---- Typography ----------------------------------------------------- */
+  --fw-font-ui:
+    "Inter", ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+  --fw-font-mono:
+    "JetBrains Mono", ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas,
+    monospace;
+  --fw-fs-xs: 11px;
+  --fw-fs-sm: 12px;
+  --fw-fs-md: 14px;
+  --fw-fs-lg: 16px;
+
+  /* ---- Spacing scale -------------------------------------------------- */
+  --fw-space-1: 4px;
+  --fw-space-2: 8px;
+  --fw-space-3: 12px;
+  --fw-space-4: 16px;
+  --fw-space-5: 24px;
+  --fw-space-6: 32px;
+  --fw-space-7: 48px;
+
+  /* ---- Radii ---------------------------------------------------------- */
+  --fw-radius-shell: 30px;
+  --fw-radius-display: 8px;
+  --fw-radius-panel: 10px;
+  --fw-radius-control: 8px;
+
+  /* ---- Elevation ------------------------------------------------------ */
+  --fw-shadow-device:
+    0 30px 70px -24px rgba(0, 0, 0, 0.8), 0 4px 12px rgba(0, 0, 0, 0.4);
+  --fw-shadow-inset: inset 0 2px 6px rgba(0, 0, 0, 0.55);
+  --fw-shadow-btn: 0 3px 5px rgba(0, 0, 0, 0.5);
+
+  /* ---- Motion --------------------------------------------------------- */
+  --fw-press-time: 80ms;
+}
