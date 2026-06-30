@@ -34,7 +34,25 @@ export interface SDEvents {
   change: { path: string };
 }
 
-export interface SDCard {
+/**
+ * Synchronous access to the resident (RAM-backed) filesystem. The BIOS and Lua
+ * call these inside the per-frame run loop, where awaiting is impossible. The
+ * async SDCard methods are the persistence/transfer boundary; both views
+ * operate on the same resident store.
+ */
+export interface SyncSDAccess {
+  existsSync(path: string): boolean;
+  statSync(path: string): FileStat | null;
+  readDirSync(path: string): readonly FileStat[];
+  mkdirSync(path: string, recursive?: boolean): void;
+  readFileSync(path: string): Uint8Array;
+  readTextFileSync(path: string): string;
+  writeFileSync(path: string, data: Uint8Array | string): void;
+  removeSync(path: string): void;
+  renameSync(from: string, to: string): void;
+}
+
+export interface SDCard extends SyncSDAccess {
   /** Live change notifications for observers (file browser, dev tools). */
   readonly events: Emitter<SDEvents>;
 

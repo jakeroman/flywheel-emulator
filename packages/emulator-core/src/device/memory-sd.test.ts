@@ -84,4 +84,34 @@ describe("MemorySDCard", () => {
     await sd.writeFile("/x/a.txt", "hi");
     expect(changes).toBeGreaterThanOrEqual(2);
   });
+
+  it("exposes a synchronous view over the same store", () => {
+    const sd = new MemorySDCard();
+    sd.mkdirSync("/d", true);
+    sd.writeFileSync("/d/f.txt", "sync");
+    expect(sd.existsSync("/d/f.txt")).toBe(true);
+    expect(sd.readTextFileSync("/d/f.txt")).toBe("sync");
+    expect(sd.readDirSync("/d").map((e) => e.name)).toEqual(["f.txt"]);
+    expect(sd.statSync("/d")?.type).toBe("dir");
+    sd.removeSync("/d/f.txt");
+    expect(sd.existsSync("/d/f.txt")).toBe(false);
+  });
+
+  it("round-trips through export / clear / import", () => {
+    const src = new MemorySDCard();
+    src.mkdirSync("/a/b", true);
+    src.writeFileSync("/a/b/file.txt", "payload");
+    src.writeFileSync("/top.txt", "top");
+    const entries = src.exportEntries();
+
+    src.clear();
+    expect(src.existsSync("/a/b/file.txt")).toBe(false);
+    expect(src.readDirSync("/")).toHaveLength(0);
+
+    const dst = new MemorySDCard();
+    dst.importEntries(entries);
+    expect(dst.readTextFileSync("/a/b/file.txt")).toBe("payload");
+    expect(dst.readTextFileSync("/top.txt")).toBe("top");
+    expect(dst.statSync("/a/b")?.type).toBe("dir");
+  });
 });

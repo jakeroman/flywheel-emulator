@@ -12,5 +12,8 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "wasmoon": "^1.16.0"
   }
 }

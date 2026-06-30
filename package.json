@@ -14,10 +14,12 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "playwright test",
     "format:check": "prettier --check \"packages/*/src/**/*.{ts,tsx,css}\"",
     "format": "prettier --write \"packages/*/src/**/*.{ts,tsx,css}\""
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "prettier": "^3.3.3",
     "typescript": "^5.6.2",
     "vitest": "^3.0.0"

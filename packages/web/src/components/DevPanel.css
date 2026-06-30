@@ -45,6 +45,29 @@
   text-transform: uppercase;
   color: var(--fw-text-dim);
 }
+.fw-section__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.fw-section__head .fw-section__title {
+  margin-bottom: var(--fw-space-3);
+}
+.fw-section__actions {
+  display: flex;
+  gap: var(--fw-space-1);
+}
+.fw-minibtn {
+  padding: 2px 8px;
+  font-size: var(--fw-fs-xs);
+  color: var(--fw-text-dim);
+  background: var(--fw-panel-inset);
+  border: 1px solid var(--fw-border);
+  border-radius: var(--fw-radius-control);
+}
+.fw-minibtn:hover {
+  color: var(--fw-text);
+}
 .fw-section__note {
   margin: 0;
   font-size: var(--fw-fs-sm);

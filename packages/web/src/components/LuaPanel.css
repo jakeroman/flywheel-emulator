@@ -1,0 +1,114 @@
+.fw-lua__controls {
+  display: flex;
+  gap: var(--fw-space-2);
+  margin-bottom: var(--fw-space-3);
+}
+
+.fw-lua__select {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  font-family: var(--fw-font-mono);
+  font-size: var(--fw-fs-xs);
+  color: var(--fw-text);
+  background: var(--fw-panel-inset);
+  border: 1px solid var(--fw-border);
+  border-radius: var(--fw-radius-control);
+}
+
+.fw-lua__btn {
+  padding: 4px 10px;
+  font-size: var(--fw-fs-xs);
+  font-weight: 600;
+  color: var(--fw-text);
+  background: var(--fw-panel-raised);
+  border: 1px solid var(--fw-border);
+  border-radius: var(--fw-radius-control);
+}
+.fw-lua__btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.fw-lua__run {
+  color: var(--fw-accent-power);
+  border-color: var(--fw-accent-power);
+}
+
+.fw-lua__statusrow {
+  display: flex;
+  align-items: center;
+  gap: var(--fw-space-2);
+  margin-bottom: var(--fw-space-2);
+}
+.fw-lua__badge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: var(--fw-fs-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  background: var(--fw-panel-inset);
+  color: var(--fw-text-dim);
+}
+.fw-lua__badge--running {
+  background: rgba(95, 208, 138, 0.15);
+  color: var(--fw-accent-power);
+}
+.fw-lua__badge--error {
+  background: rgba(224, 138, 122, 0.16);
+  color: #e08a7a;
+}
+.fw-lua__path {
+  font-family: var(--fw-font-mono);
+  font-size: var(--fw-fs-xs);
+  color: var(--fw-text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fw-lua__error {
+  margin: 0 0 var(--fw-space-2);
+  padding: var(--fw-space-2);
+  font-family: var(--fw-font-mono);
+  font-size: var(--fw-fs-xs);
+  color: #e08a7a;
+  background: rgba(224, 138, 122, 0.08);
+  border: 1px solid rgba(224, 138, 122, 0.3);
+  border-radius: var(--fw-radius-control);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.fw-lua__consolehead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--fw-space-1);
+}
+.fw-lua__consolelabel {
+  font-size: var(--fw-fs-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fw-text-faint);
+}
+
+.fw-lua__console {
+  max-height: 140px;
+  overflow-y: auto;
+  padding: var(--fw-space-2);
+  font-family: var(--fw-font-mono);
+  font-size: var(--fw-fs-xs);
+  line-height: 1.5;
+  color: var(--fw-text-dim);
+  background: var(--fw-panel-inset);
+  border-radius: var(--fw-radius-control);
+}
+.fw-lua__empty {
+  color: var(--fw-text-faint);
+  font-style: italic;
+}
+.fw-lua__line {
+  white-space: pre-wrap;
+  word-break: break-word;
+}

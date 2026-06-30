@@ -1,30 +1,34 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FileStat, SDCard } from "@flywheel/emulator-core";
 import { useDevice } from "../device/device-context.js";
 import { usePoweredOn, usePowerSnapshot } from "../hooks/useDeviceStores.js";
+import { exportToBlob, importFromText } from "../storage/sd-persistence.js";
+import { LuaPanel } from "./LuaPanel.js";
 import "./DevPanel.css";
 
 /**
- * The development side panel. In Phase 0 it surfaces live device state and the
- * power inputs, plus a read-only view of the virtual SD card. Phases 1 and 3
- * grow this into the full editor / file manager / state inspector.
+ * The development side panel: live device status, the Lua run panel, power
+ * controls, and the SD card browser with import/export. Phase 3 grows this into
+ * the full in-browser editor / file manager / state inspector.
  */
 export function DevPanel() {
   return (
     <div className="fw-devpanel" role="region" aria-label="Developer tools">
       <header className="fw-devpanel__head">
         <h2 className="fw-devpanel__title">DEV TOOLS</h2>
-        <span className="fw-devpanel__phase">Phase 0</span>
+        <span className="fw-devpanel__phase">Phase 1</span>
       </header>
 
       <StatusSection />
+      <LuaPanel />
       <PowerSection />
       <StorageSection />
 
       <section className="fw-section fw-section--muted">
-        <h3 className="fw-section__title">Lua Editor</h3>
+        <h3 className="fw-section__title">Editor</h3>
         <p className="fw-section__note">
-          In-browser editor with hot-reload arrives in Phase 3.
+          In-browser Lua editor with hot-reload arrives in Phase 3. For now,
+          edit files on disk and re-run.
         </p>
       </section>
     </div>
@@ -115,9 +119,57 @@ function PowerSection() {
 function StorageSection() {
   const device = useDevice();
   const entries = useSdTree(device.sd);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  const handleExport = () => {
+    const url = URL.createObjectURL(exportToBlob(device.sd));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "flywheel-sd.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportFile = async (file: File) => {
+    if (!window.confirm("Import replaces the entire SD card. Continue?")) {
+      return;
+    }
+    try {
+      importFromText(device.sd, await file.text());
+    } catch (e) {
+      // eslint-disable-next-line no-alert
+      window.alert(`Import failed: ${e instanceof Error ? e.message : e}`);
+    }
+  };
+
   return (
     <section className="fw-section">
-      <h3 className="fw-section__title">SD Card</h3>
+      <div className="fw-section__head">
+        <h3 className="fw-section__title">SD Card</h3>
+        <div className="fw-section__actions">
+          <button type="button" className="fw-minibtn" onClick={handleExport}>
+            Export
+          </button>
+          <button
+            type="button"
+            className="fw-minibtn"
+            onClick={() => fileInput.current?.click()}
+          >
+            Import
+          </button>
+          <input
+            ref={fileInput}
+            type="file"
+            accept="application/json,.json"
+            hidden
+            onChange={(e) => {
+              const file = e.currentTarget.files?.[0];
+              if (file) void handleImportFile(file);
+              e.currentTarget.value = "";
+            }}
+          />
+        </div>
+      </div>
       {entries.length === 0 ? (
         <p className="fw-section__note">Empty.</p>
       ) : (

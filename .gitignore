@@ -21,3 +21,8 @@ npm-debug.log*
 
 # Emulator scratch
 *.fwmod.tmp
+
+# Playwright
+test-results/
+playwright-report/
+.playwright/

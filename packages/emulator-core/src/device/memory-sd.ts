@@ -12,8 +12,12 @@ const decoder = new TextDecoder();
 
 /**
  * In-memory virtual filesystem implementing the SDCard contract. This is the
- * authoritative store; Phase 1 layers IndexedDB persistence and import/export
- * on top without changing this behavior.
+ * authoritative resident store; Phase 1 layers IndexedDB persistence and
+ * import/export on top without changing this behavior.
+ *
+ * The core operations are synchronous (the store lives in RAM); the async
+ * SDCard methods are thin delegators so the same code backs both the in-frame
+ * sync view used by Lua/BIOS and the async persistence/transfer view.
  */
 export class MemorySDCard implements SDCard {
   readonly events = new Emitter<SDEvents>();
@@ -23,17 +27,19 @@ export class MemorySDCard implements SDCard {
     this.nodes.set("/", { type: "dir", data: EMPTY, mtime: now() });
   }
 
-  async exists(path: string): Promise<boolean> {
+  // ---- Synchronous core ------------------------------------------------
+
+  existsSync(path: string): boolean {
     return this.nodes.has(normalize(path));
   }
 
-  async stat(path: string): Promise<FileStat | null> {
+  statSync(path: string): FileStat | null {
     const p = normalize(path);
     const node = this.nodes.get(p);
     return node ? toStat(p, node) : null;
   }
 
-  async readDir(path: string): Promise<readonly FileStat[]> {
+  readDirSync(path: string): readonly FileStat[] {
     const dir = normalize(path);
     const node = this.nodes.get(dir);
     if (!node) throw new Error(`ENOENT: ${dir}`);
@@ -54,7 +60,7 @@ export class MemorySDCard implements SDCard {
     return entries;
   }
 
-  async mkdir(path: string, recursive = false): Promise<void> {
+  mkdirSync(path: string, recursive = false): void {
     const p = normalize(path);
     if (this.nodes.has(p)) {
       if (this.nodes.get(p)!.type === "dir") return;
@@ -64,7 +70,7 @@ export class MemorySDCard implements SDCard {
     const parentNode = this.nodes.get(parent);
     if (!parentNode) {
       if (!recursive) throw new Error(`ENOENT: ${parent}`);
-      await this.mkdir(parent, true);
+      this.mkdirSync(parent, true);
     } else if (parentNode.type !== "dir") {
       throw new Error(`ENOTDIR: ${parent}`);
     }
@@ -72,7 +78,7 @@ export class MemorySDCard implements SDCard {
     this.events.emit("change", { path: p });
   }
 
-  async readFile(path: string): Promise<Uint8Array> {
+  readFileSync(path: string): Uint8Array {
     const p = normalize(path);
     const node = this.nodes.get(p);
     if (!node) throw new Error(`ENOENT: ${p}`);
@@ -80,11 +86,11 @@ export class MemorySDCard implements SDCard {
     return node.data;
   }
 
-  async readTextFile(path: string): Promise<string> {
-    return decoder.decode(await this.readFile(path));
+  readTextFileSync(path: string): string {
+    return decoder.decode(this.readFileSync(path));
   }
 
-  async writeFile(path: string, data: Uint8Array | string): Promise<void> {
+  writeFileSync(path: string, data: Uint8Array | string): void {
     const p = normalize(path);
     const parent = dirname(p);
     const parentNode = this.nodes.get(parent);
@@ -96,7 +102,7 @@ export class MemorySDCard implements SDCard {
     this.events.emit("change", { path: p });
   }
 
-  async remove(path: string): Promise<void> {
+  removeSync(path: string): void {
     const p = normalize(path);
     if (p === "/") throw new Error("EPERM: cannot remove root");
     if (!this.nodes.has(p)) throw new Error(`ENOENT: ${p}`);
@@ -107,7 +113,7 @@ export class MemorySDCard implements SDCard {
     this.events.emit("change", { path: p });
   }
 
-  async rename(from: string, to: string): Promise<void> {
+  renameSync(from: string, to: string): void {
     const src = normalize(from);
     const dst = normalize(to);
     if (!this.nodes.has(src)) throw new Error(`ENOENT: ${src}`);
@@ -137,31 +143,128 @@ export class MemorySDCard implements SDCard {
     }
     this.events.emit("change", { path: dst });
   }
+
+  // ---- Async persistence/transfer view (delegates to the sync core) ----
+
+  async exists(path: string): Promise<boolean> {
+    return this.existsSync(path);
+  }
+  async stat(path: string): Promise<FileStat | null> {
+    return this.statSync(path);
+  }
+  async readDir(path: string): Promise<readonly FileStat[]> {
+    return this.readDirSync(path);
+  }
+  async mkdir(path: string, recursive = false): Promise<void> {
+    this.mkdirSync(path, recursive);
+  }
+  async readFile(path: string): Promise<Uint8Array> {
+    return this.readFileSync(path);
+  }
+  async readTextFile(path: string): Promise<string> {
+    return this.readTextFileSync(path);
+  }
+  async writeFile(path: string, data: Uint8Array | string): Promise<void> {
+    this.writeFileSync(path, data);
+  }
+  async remove(path: string): Promise<void> {
+    this.removeSync(path);
+  }
+  async rename(from: string, to: string): Promise<void> {
+    this.renameSync(from, to);
+  }
+
+  /** Snapshot every entry (for export / persistence). Buffers are copied so
+   * the snapshot is independent of later writes to the resident store. */
+  exportEntries(): SDEntry[] {
+    const out: SDEntry[] = [];
+    for (const [path, node] of this.nodes) {
+      if (path === "/") continue;
+      out.push({ path, type: node.type, data: node.data.slice() });
+    }
+    return out;
+  }
+
+  /** Reset to an empty filesystem (just the root directory). */
+  clear(): void {
+    this.nodes.clear();
+    this.nodes.set("/", { type: "dir", data: EMPTY, mtime: now() });
+    this.events.emit("change", { path: "/" });
+  }
+
+  /** Load a set of entries (creating any missing parent directories). */
+  importEntries(entries: readonly SDEntry[]): void {
+    const dirs = entries
+      .filter((e) => e.type === "dir")
+      .sort((a, b) => a.path.length - b.path.length);
+    for (const d of dirs) this.mkdirSync(d.path, true);
+    for (const f of entries) {
+      if (f.type === "file") {
+        this.mkdirSync(dirname(f.path), true);
+        this.writeFileSync(f.path, f.data);
+      }
+    }
+    this.events.emit("change", { path: "/" });
+  }
 }
 
-/** Seed an SD card with a little mock content for the Phase 0 file browser. */
+export interface SDEntry {
+  path: string;
+  type: "file" | "dir";
+  data: Uint8Array;
+}
+
+/** A small but complete Lua app: a bouncing ball you can steer, with sound. */
+const DEMO_LUA = `-- Flywheel Lua demo: steer the ball with the D-pad, A = beep.
+local x, y = fw.width / 2, fw.height / 2
+local vx, vy = 70, 52
+local r = 5
+
+function _init()
+  fw.log("demo started: " .. fw.width .. "x" .. fw.height)
+end
+
+function _update(dt)
+  if fw.btn(fw.LEFT) then vx = vx - 240 * dt end
+  if fw.btn(fw.RIGHT) then vx = vx + 240 * dt end
+  if fw.btn(fw.UP) then vy = vy - 240 * dt end
+  if fw.btn(fw.DOWN) then vy = vy + 240 * dt end
+  if fw.btnp(fw.A) then fw.sound.tone(660, 70) end
+
+  x = x + vx * dt
+  y = y + vy * dt
+  if x < r then x, vx = r, -vx; fw.sound.tone(330, 40) end
+  if x > fw.width - r then x, vx = fw.width - r, -vx; fw.sound.tone(330, 40) end
+  if y < r then y, vy = r, -vy; fw.sound.tone(330, 40) end
+  if y > fw.height - r then y, vy = fw.height - r, -vy; fw.sound.tone(330, 40) end
+end
+
+function _draw()
+  fw.gfx.cls()
+  fw.gfx.rect(0, 0, fw.width, fw.height)
+  fw.gfx.circfill(x, y, r)
+  fw.gfx.print("FLYWHEEL LUA DEMO", 8, 8)
+  fw.gfx.print("D-PAD MOVE   A BEEP", 8, 20)
+  fw.gfx.print(string.format("t=%.1f", fw.time()), 8, fw.height - 14)
+end
+`;
+
+/** Seed an SD card with a little mock content for the file browser / demos. */
 export async function seedMockContent(sd: MemorySDCard): Promise<void> {
-  await sd.mkdir("/games", true);
-  await sd.mkdir("/games/snake", true);
-  await sd.writeFile(
+  sd.mkdirSync("/games", true);
+  sd.mkdirSync("/games/demo", true);
+  sd.writeFileSync("/games/demo/main.lua", DEMO_LUA);
+  sd.writeFileSync(
+    "/games/demo/meta.lua",
+    'return { title = "Bounce Demo" }\n',
+  );
+  sd.mkdirSync("/games/snake", true);
+  sd.writeFileSync(
     "/games/snake/main.lua",
     "-- Snake (placeholder)\nfunction _init() end\nfunction _update() end\nfunction _draw() end\n",
   );
-  await sd.writeFile(
-    "/games/snake/meta.lua",
-    'return { title = "Snake", icon = "icon.fwb" }\n',
-  );
-  await sd.mkdir("/games/starfield", true);
-  await sd.writeFile(
-    "/games/starfield/main.lua",
-    "-- Starfield (placeholder)\nfunction _draw() end\n",
-  );
-  await sd.writeFile(
-    "/games/starfield/meta.lua",
-    'return { title = "Starfield" }\n',
-  );
-  await sd.mkdir("/system", true);
-  await sd.writeFile(
+  sd.mkdirSync("/system", true);
+  sd.writeFileSync(
     "/system/settings.json",
     '{ "wifi": [], "lastLevel": 0.75 }\n',
   );

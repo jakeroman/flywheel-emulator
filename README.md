@@ -41,8 +41,33 @@ Other scripts:
 ```bash
 npm run build      # production build of the web app
 npm run typecheck  # typecheck every workspace
+npm test           # unit tests (Vitest) for the core HAL/runtime
+npm run test:e2e   # browser smoke test (Playwright; builds + previews)
 npm run format     # prettier --write
 ```
+
+## Writing Lua
+
+Drop a `.lua` file on the virtual SD card (or edit the seeded
+`/games/demo/main.lua`), pick it in the dev panel's **Lua** section, and hit
+Run. A script defines any of `_init()`, `_update(dt)`, `_draw()` and uses the
+global `fw` API:
+
+```lua
+function _update(dt)
+  if fw.btnp(fw.A) then fw.sound.tone(660, 80) end
+end
+
+function _draw()
+  fw.gfx.cls()
+  fw.gfx.print("HELLO", 8, 8)
+  fw.gfx.circfill(200, 120, 6)
+end
+```
+
+`fw` surface: `fw.gfx.{cls,pixel,line,rect,rectfill,circle,circfill,print,text_width}`,
+`fw.btn(id)` / `fw.btnp(id)` with `fw.UP…fw.SELECT`, `fw.fs.{read,write,exists,list,mkdir,remove,stat}`,
+`fw.sound.tone(hz, ms)`, `fw.time()`, `fw.log(...)`, `fw.width` / `fw.height`.
 
 ## Controls
 
@@ -58,11 +83,13 @@ On-screen buttons can also be clicked/tapped.
 
 ## Roadmap
 
-- **Phase 0 — Scaffold & device shell.** _(current)_ The stylized device UI:
-  display canvas, working gamepad, power switch, dev-tools side panel.
-- **Phase 1 — Simulated hardware layer + Lua runtime.** Full HAL + wasmoon; the
-  Lua API for display, gamepad, SD, power, and audio.
-- **Phase 2 — BIOS simulation.** Boot, game selector, settings, charge tracking.
+- **Phase 0 — Scaffold & device shell.** ✅ The stylized device UI: display
+  canvas, working gamepad, power switch, dev-tools side panel.
+- **Phase 1 — Simulated hardware layer + Lua runtime.** ✅ HAL + graphics + font
+  + wasmoon; the `fw` Lua API for display, gamepad, SD, power, and audio; SD
+  persistence + import/export.
+- **Phase 2 — BIOS simulation.** _(next)_ Boot, game selector, settings, charge
+  tracking.
 - **Phase 3 — In-emulator dev environment.** Lua editor + hot-reload, SD file
   editor, live power/state inspection.
 - **Phase 4 — Native C toolchain (CLI).** Compile dynamic C modules to `.fwmod`.

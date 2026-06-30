@@ -3,13 +3,23 @@
 // Hardware abstraction layer (contracts).
 export * from "./hal/index.js";
 
+// Graphics toolkit (drawing primitives + built-in font) over a DisplayDevice.
+export * from "./gfx/index.js";
+
+// Lua runtime (wasmoon) + the Flywheel `fw` API.
+export * from "./lua/index.js";
+
 // Concrete emulated implementations.
 // (GamepadEvents / PowerModelEvents / SDEvents are part of the HAL contracts
 // above, re-exported via ./hal/index.js.)
 export { FrameBuffer } from "./device/frame-buffer.js";
 export { Gamepad } from "./device/gamepad.js";
 export { EmulatedPowerModel, POWER_CONSTANTS } from "./device/power-model.js";
-export { MemorySDCard, seedMockContent } from "./device/memory-sd.js";
+export {
+  MemorySDCard,
+  seedMockContent,
+  type SDEntry,
+} from "./device/memory-sd.js";
 export {
   EmulatedFlywheelDevice,
   createDevice,
