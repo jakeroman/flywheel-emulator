@@ -1,4 +1,4 @@
-import { LuaFactory, type LuaEngine } from "wasmoon";
+import type { LuaEngine } from "wasmoon";
 import type { FlywheelDevice } from "../hal/device.js";
 import { Graphics } from "../gfx/graphics.js";
 import { createFlywheelApi } from "./flywheel-api.js";
@@ -85,6 +85,9 @@ export class LuaRuntime {
       return false;
     }
 
+    // Import wasmoon lazily so its (large) glue isn't in the eager bundle — the
+    // device shell and BIOS load without it; the VM fetches on first launch.
+    const { LuaFactory } = await import("wasmoon");
     const factory = new LuaFactory(this.options.wasmUri);
     let engine: LuaEngine;
     try {

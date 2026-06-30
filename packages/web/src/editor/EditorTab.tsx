@@ -21,6 +21,19 @@ interface TreeEntry extends FileStat {
   depth: number;
 }
 
+const decoder = new TextDecoder();
+
+/** Heuristic: a NUL byte in the head means binary (don't edit as text). */
+function isBinary(bytes: Uint8Array): boolean {
+  const n = Math.min(bytes.length, 1024);
+  for (let i = 0; i < n; i++) if (bytes[i] === 0) return true;
+  return false;
+}
+
+function errMsg(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 /**
  * The Phase 3 dev loop: pick a file from the SD card, edit it, and Save (or
  * Ctrl-S). With "run on save" on, saving a .lua file hot-reloads it on the
@@ -34,10 +47,12 @@ export function EditorTab() {
   const [openPath, setOpenPath] = useState<string | null>(null);
   const [content, setContent] = useState("");
   const [dirty, setDirty] = useState(false);
-  const [runOnSave, setRunOnSave] = useState(true);
+  const [binarySize, setBinarySize] = useState<number | null>(null); // non-null = binary
+  const [runOnSave, setRunOnSave] = useState(false);
   const consoleRef = useRef<HTMLDivElement>(null);
 
-  // Autoscroll the run-output console to the newest line.
+  const binary = binarySize !== null;
+
   useEffect(() => {
     const el = consoleRef.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -45,53 +60,82 @@ export function EditorTab() {
 
   const open = useCallback(
     (path: string) => {
+      if (path === openPath) return; // already open
+      if (dirty && !window.confirm("Discard unsaved changes?")) return;
       try {
-        setContent(device.sd.readTextFileSync(path));
+        const bytes = device.sd.readFileSync(path);
         setOpenPath(path);
         setDirty(false);
+        if (isBinary(bytes)) {
+          setBinarySize(bytes.length);
+          setContent("");
+        } else {
+          setBinarySize(null);
+          setContent(decoder.decode(bytes));
+        }
       } catch {
         // ignore unreadable file
       }
     },
-    [device],
+    [openPath, dirty, device],
   );
 
   const save = useCallback(() => {
-    if (!openPath) return;
+    if (!openPath || binary || !dirty) return;
     device.sd.writeFileSync(openPath, content);
     setDirty(false);
     if (runOnSave && openPath.endsWith(".lua")) {
       void bios.launchScript(openPath);
     }
-  }, [openPath, content, runOnSave, device, bios]);
+  }, [openPath, binary, dirty, content, runOnSave, device, bios]);
 
   const run = useCallback(() => {
-    if (!openPath) return;
-    if (dirty) device.sd.writeFileSync(openPath, content);
-    setDirty(false);
+    if (!openPath || binary || !openPath.endsWith(".lua")) return;
+    if (dirty) {
+      device.sd.writeFileSync(openPath, content);
+      setDirty(false);
+    }
     void bios.launchScript(openPath);
-  }, [openPath, content, dirty, device, bios]);
+  }, [openPath, binary, dirty, content, device, bios]);
 
   const newFile = () => {
-    const path = window.prompt("New file path", "/games/");
-    if (!path) return;
+    const raw = window.prompt("New file path", "/games/");
+    if (!raw) return;
+    const path = raw.trim();
+    if (!path.startsWith("/") || path.endsWith("/")) {
+      window.alert("Enter an absolute file path, e.g. /games/foo.lua");
+      return;
+    }
+    if (device.sd.existsSync(path)) {
+      window.alert("A file or folder already exists at that path.");
+      return;
+    }
     const parent = path.slice(0, path.lastIndexOf("/")) || "/";
     try {
       if (parent !== "/") device.sd.mkdirSync(parent, true);
       device.sd.writeFileSync(path, "");
       open(path);
     } catch (e) {
-      window.alert(`Could not create: ${e instanceof Error ? e.message : e}`);
+      window.alert(`Could not create: ${errMsg(e)}`);
     }
   };
 
   const newFolder = () => {
-    const path = window.prompt("New folder path", "/games/");
-    if (!path) return;
+    const raw = window.prompt("New folder path", "/games/");
+    if (!raw) return;
+    const path = raw.trim().replace(/\/+$/, "");
+    if (!path.startsWith("/")) {
+      window.alert("Enter an absolute folder path, e.g. /games/foo");
+      return;
+    }
+    if (device.sd.existsSync(path)) {
+      window.alert("A file or folder already exists at that path.");
+      return;
+    }
     try {
       device.sd.mkdirSync(path, true);
     } catch (e) {
-      window.alert(`Could not create: ${e instanceof Error ? e.message : e}`);
+      window.alert(`Could not create: ${errMsg(e)}`);
     }
   };
 
@@ -102,6 +146,7 @@ export function EditorTab() {
       setOpenPath(null);
       setContent("");
       setDirty(false);
+      setBinarySize(null);
     }
   };
 
@@ -116,7 +161,7 @@ export function EditorTab() {
           type="button"
           className="fw-minibtn"
           onClick={save}
-          disabled={!openPath || !dirty}
+          disabled={!openPath || binary || !dirty}
         >
           Save
         </button>
@@ -124,7 +169,7 @@ export function EditorTab() {
           type="button"
           className="fw-minibtn fw-edit__run"
           onClick={run}
-          disabled={!openPath || !openPath.endsWith(".lua")}
+          disabled={!openPath || binary || !openPath.endsWith(".lua")}
         >
           ▶ Run
         </button>
@@ -156,7 +201,9 @@ export function EditorTab() {
                 style={{ paddingLeft: `${e.depth * 12 + 4}px` }}
               >
                 {e.type === "dir" ? (
-                  <span className="fw-tree__glyph">▸</span>
+                  <span className="fw-tree__glyph" aria-hidden="true">
+                    ▸
+                  </span>
                 ) : (
                   <button
                     type="button"
@@ -185,9 +232,22 @@ export function EditorTab() {
         </div>
 
         <div className="fw-edit__main">
-          {openPath ? (
+          {openPath == null ? (
+            <p className="fw-edit__empty">
+              Select a file to edit, or create one. A <code>.lua</code> file can
+              be run on the device (Run, or Ctrl-S with “run on save”).
+            </p>
+          ) : binary ? (
+            <p className="fw-edit__empty">
+              Binary file — {binarySize} bytes (not editable as text).
+            </p>
+          ) : (
             <Suspense
-              fallback={<p className="fw-edit__empty">Loading editor…</p>}
+              fallback={
+                <p className="fw-edit__empty" role="status">
+                  Loading editor…
+                </p>
+              }
             >
               <CodeEditor
                 value={content}
@@ -198,11 +258,6 @@ export function EditorTab() {
                 onSave={save}
               />
             </Suspense>
-          ) : (
-            <p className="fw-edit__empty">
-              Select a file to edit, or create one. Save (Ctrl-S) a{" "}
-              <code>.lua</code> file to run it on the device.
-            </p>
           )}
         </div>
       </div>

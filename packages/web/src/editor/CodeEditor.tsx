@@ -64,6 +64,7 @@ export function CodeEditor({
     });
     const v = new EditorView({ state, parent: host.current });
     view.current = v;
+    v.focus(); // land the caret in the editor when a file opens
     return () => {
       v.destroy();
       view.current = null;

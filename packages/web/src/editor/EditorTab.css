@@ -114,7 +114,9 @@
   padding: 0 2px;
   opacity: 0;
 }
-.fw-tree__row:hover .fw-tree__del {
+.fw-tree__row:hover .fw-tree__del,
+.fw-tree__row:focus-within .fw-tree__del,
+.fw-tree__del:focus-visible {
   opacity: 1;
 }
 .fw-tree__del:hover {

@@ -35,7 +35,7 @@ test("boots the BIOS, launches a game, and returns to the menu", async ({
   await page.goto("/");
   await expect(page.locator(".fw-device")).toBeVisible();
   await waitForSeed(page);
-  await page.getByRole("tab", { name: "Dev" }).click(); // reveal status badge
+  await page.getByRole("button", { name: "Dev" }).click(); // reveal status badge
 
   // Power on → boot splash → game selector.
   await page.getByRole("switch", { name: "Power switch" }).click();
@@ -70,7 +70,7 @@ test("opens a script in the editor and runs it", async ({ page }) => {
   await expect(page.locator(".cm-content")).toContainText("FLYWHEEL LUA DEMO");
 
   await page.getByRole("button", { name: /Run/ }).click();
-  await page.getByRole("tab", { name: "Dev" }).click();
+  await page.getByRole("button", { name: "Dev" }).click();
   await expect(screenBadge(page)).toHaveText("game", { timeout: 10_000 });
   await expect.poll(() => inkRatio(page), { timeout: 5_000 }).toBeGreaterThan(0);
 
@@ -83,7 +83,7 @@ test("dev launcher runs a script directly", async ({ page }) => {
 
   await page.goto("/");
   await waitForSeed(page);
-  await page.getByRole("tab", { name: "Dev" }).click();
+  await page.getByRole("button", { name: "Dev" }).click();
 
   await page.selectOption(".fw-lua__select", "/games/snake/main.lua");
   await page.getByRole("button", { name: "Launch" }).click();

@@ -16,11 +16,12 @@ export function Workspace() {
 
   return (
     <div className="fw-workspace">
-      <div className="fw-workspace__tabs" role="tablist" aria-label="Workspace">
+      {/* Plain toggle buttons (aria-pressed) rather than a half-implemented
+          ARIA tablist — the full roving-tabindex tab pattern isn't wired. */}
+      <div className="fw-workspace__tabs">
         <button
           type="button"
-          role="tab"
-          aria-selected={tab === "editor"}
+          aria-pressed={tab === "editor"}
           className={`fw-tab${tab === "editor" ? " is-active" : ""}`}
           onClick={() => setTab("editor")}
         >
@@ -28,8 +29,7 @@ export function Workspace() {
         </button>
         <button
           type="button"
-          role="tab"
-          aria-selected={tab === "dev"}
+          aria-pressed={tab === "dev"}
           className={`fw-tab${tab === "dev" ? " is-active" : ""}`}
           onClick={() => setTab("dev")}
         >
