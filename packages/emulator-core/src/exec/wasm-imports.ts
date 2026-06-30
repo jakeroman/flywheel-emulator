@@ -2,19 +2,15 @@
  * The `env` import object a wasm32 native module is instantiated with — the
  * runtime side of the module ABI (tools/fwmod/include/fw_api.h).
  *
- * In the native (Xtensa/host) world the host hands the module a struct of
- * function pointers; in wasm that same surface is a set of imports the module
- * calls. Each function mirrors a fw_api_t member, marshalling i32 pointer
- * arguments through the module's linear memory and dispatching to the SAME HAL
- * (via Graphics + the device) that the Lua `fw` API uses — so one C source and
- * a Lua app drive identical device behavior. Bools cross as i32 (nonzero=true);
- * unlike Lua, wasm args are already finite integers, so no coercion is needed.
+ * Each import maps a wasm function-call signature onto the SHARED fw_api
+ * operations (hal-ops.ts), which the Xtensa backend also uses — so there is one
+ * HAL surface, not two. The wasm side just adapts its i32 params to the op.
  */
 
 import type { FlywheelDevice } from "../hal/device.js";
-import { Button } from "../hal/gamepad.js";
 import type { Graphics } from "../gfx/graphics.js";
-import { readBytes, readCString, writeBytes } from "./wasm-memory.js";
+import { HAL_OPS, type HalContext } from "./hal-ops.js";
+import { WasmMem } from "./mem-access.js";
 
 export interface WasmEnvContext {
   /** The module's exported linear memory. `memory` is NOT an import; the runtime
@@ -27,81 +23,46 @@ export interface WasmEnvContext {
   log: (message: string) => void;
 }
 
-/** int button id (fw_button_t order) → Button; Menu is reserved (not exposed). */
-const BUTTON_BY_ID: ReadonlyArray<Button> = [
-  Button.Up,
-  Button.Down,
-  Button.Left,
-  Button.Right,
-  Button.A,
-  Button.B,
-  Button.Select,
-];
-
 /** Build the `env` import functions. Memory is NOT included — the module
  *  exports its own linear memory, which the runtime reads after instantiation. */
 export function createWasmEnv(
   ctx: WasmEnvContext,
 ): Record<string, WebAssembly.ImportValue> {
-  const { device, gfx } = ctx;
-  const str = (ptr: number): string => readCString(ctx.memory, ptr);
-  const on = (v: number): boolean => v !== 0;
-  const button = (id: number): Button | null => BUTTON_BY_ID[id] ?? null;
+  // A WasmMem reads ctx.memory lazily, so it tracks the exported memory the
+  // runtime assigns after instantiation (and any later growth/detach).
+  const hal: HalContext = {
+    mem: new WasmMem(() => ctx.memory),
+    device: ctx.device,
+    gfx: ctx.gfx,
+    getTimeMs: ctx.getTimeMs,
+    log: ctx.log,
+  };
 
   return {
-    // ---- input ----
-    btn: (id: number): number => {
-      const b = button(id);
-      return b && device.gamepad.isDown(b) ? 1 : 0;
-    },
-    btnp: (id: number): number => {
-      const b = button(id);
-      return b && device.gamepad.wasPressed(b) ? 1 : 0;
-    },
-
-    // ---- graphics ----
-    cls: (v: number): void => gfx.clear(on(v)),
-    pixel: (x: number, y: number, v: number): void => gfx.pixel(x, y, on(v)),
+    btn: (id: number): number => HAL_OPS.btn(hal, id),
+    btnp: (id: number): number => HAL_OPS.btnp(hal, id),
+    cls: (v: number): void => HAL_OPS.cls(hal, v),
+    pixel: (x: number, y: number, v: number): void => HAL_OPS.pixel(hal, x, y, v),
     line: (x0: number, y0: number, x1: number, y1: number, v: number): void =>
-      gfx.line(x0, y0, x1, y1, on(v)),
+      HAL_OPS.line(hal, x0, y0, x1, y1, v),
     rect: (x: number, y: number, w: number, h: number, v: number): void =>
-      gfx.rect(x, y, w, h, on(v)),
+      HAL_OPS.rect(hal, x, y, w, h, v),
     rectfill: (x: number, y: number, w: number, h: number, v: number): void =>
-      gfx.rectFill(x, y, w, h, on(v)),
+      HAL_OPS.rectfill(hal, x, y, w, h, v),
     circle: (x: number, y: number, r: number, v: number): void =>
-      gfx.circle(x, y, r, on(v)),
+      HAL_OPS.circle(hal, x, y, r, v),
     circfill: (x: number, y: number, r: number, v: number): void =>
-      gfx.circleFill(x, y, r, on(v)),
-    print: (sPtr: number, x: number, y: number, v: number): void => {
-      gfx.print(str(sPtr), x, y, on(v)); // gfx.print returns a cursor; discard it
-    },
-    text_width: (sPtr: number): number => gfx.textWidth(str(sPtr)),
-
-    // ---- filesystem (resident SD, synchronous) ----
-    fs_read: (pathPtr: number, bufPtr: number, cap: number): number => {
-      try {
-        const data = device.sd.readFileSync(str(pathPtr));
-        return writeBytes(ctx.memory, bufPtr, data, cap);
-      } catch {
-        return -1;
-      }
-    },
-    fs_write: (pathPtr: number, dataPtr: number, len: number): number => {
-      try {
-        device.sd.writeFileSync(str(pathPtr), readBytes(ctx.memory, dataPtr, len));
-        return 0;
-      } catch {
-        return -1;
-      }
-    },
-    fs_exists: (pathPtr: number): number =>
-      device.sd.existsSync(str(pathPtr)) ? 1 : 0,
-
-    // ---- sound ----
-    tone: (hz: number, ms: number): void => device.audio.playTone(hz, ms),
-
-    // ---- misc ----
-    time_ms: (): number => Math.floor(ctx.getTimeMs()) >>> 0,
-    log: (msgPtr: number): void => ctx.log(str(msgPtr)),
+      HAL_OPS.circfill(hal, x, y, r, v),
+    print: (sPtr: number, x: number, y: number, v: number): void =>
+      HAL_OPS.print(hal, sPtr, x, y, v),
+    text_width: (sPtr: number): number => HAL_OPS.text_width(hal, sPtr),
+    fs_read: (pathPtr: number, bufPtr: number, cap: number): number =>
+      HAL_OPS.fs_read(hal, pathPtr, bufPtr, cap),
+    fs_write: (pathPtr: number, dataPtr: number, len: number): number =>
+      HAL_OPS.fs_write(hal, pathPtr, dataPtr, len),
+    fs_exists: (pathPtr: number): number => HAL_OPS.fs_exists(hal, pathPtr),
+    tone: (hz: number, ms: number): void => HAL_OPS.tone(hal, hz, ms),
+    time_ms: (): number => HAL_OPS.time_ms(hal),
+    log: (msgPtr: number): void => HAL_OPS.log(hal, msgPtr),
   };
 }

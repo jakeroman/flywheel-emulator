@@ -9,6 +9,8 @@ import {
   type LuaStatus,
 } from "../lua/lua-runtime.js";
 import { WasmModuleRuntime } from "../exec/wasm-runtime.js";
+import { XtensaModuleRuntime } from "../exec/xtensa/xtensa-runtime.js";
+import { Arch, decodeFwmod } from "../fwmod/index.js";
 import type {
   ModuleRuntime,
   ModuleRuntimeCallbacks,
@@ -86,10 +88,11 @@ const H = 240;
 export class Bios {
   readonly events = new Emitter<BiosEvents>();
   private readonly gfx: Graphics;
-  // Two execution backends, both ModuleRuntime; start() points `active` at one
-  // per game by entry type (.lua → Lua, .fwmod → wasm).
+  // Execution backends, all ModuleRuntime; start() points `active` at one per
+  // game (.lua → Lua, .fwmod → wasm or xtensa per the module's arch).
   private readonly lua: LuaRuntime;
   private readonly wasm: WasmModuleRuntime;
+  private readonly xtensa: XtensaModuleRuntime;
   private active: ModuleRuntime;
 
   private screen: BiosScreen = "boot";
@@ -124,6 +127,7 @@ export class Bios {
     };
     this.lua = new LuaRuntime(device, callbacks, options);
     this.wasm = new WasmModuleRuntime(device, callbacks);
+    this.xtensa = new XtensaModuleRuntime(device, callbacks);
     this.active = this.lua;
   }
 
@@ -224,6 +228,7 @@ export class Bios {
   dispose(): void {
     void this.lua.dispose();
     void this.wasm.dispose();
+    void this.xtensa.dispose();
   }
 
   update(dtSeconds: number): void {
@@ -379,8 +384,22 @@ export class Bios {
     const entry = resolved.entryPath;
     try {
       if (entry.endsWith(".fwmod")) {
-        this.active = this.wasm;
-        await this.wasm.load(this.device.sd.readFileSync(entry));
+        const bytes = this.device.sd.readFileSync(entry);
+        // Pick the backend by the module's arch (xtensa-lx7 → interpreter,
+        // else wasm). A bad header falls through to wasm, which fails cleanly.
+        let arch = -1;
+        try {
+          arch = decodeFwmod(bytes).arch;
+        } catch {
+          /* leave arch unknown */
+        }
+        if (arch === Arch.XtensaLx7) {
+          this.active = this.xtensa;
+          await this.xtensa.load(bytes);
+        } else {
+          this.active = this.wasm;
+          await this.wasm.load(bytes);
+        }
       } else {
         this.active = this.lua;
         await this.lua.load(this.device.sd.readTextFileSync(entry));

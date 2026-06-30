@@ -44,9 +44,9 @@ export interface FwmodInspection {
   reason: string | null;
 }
 
-/** Architectures the emulator can currently execute. Phase 5 adds wasm32 (the
- *  WasmModuleRuntime backend); the Xtensa interpreter will add xtensa-lx7. */
-export const SUPPORTED_ARCHS: readonly number[] = [Arch.Wasm32];
+/** Architectures the emulator can currently execute: wasm32 (WasmModuleRuntime)
+ *  and xtensa-lx7 (the call0 XtensaModuleRuntime interpreter). */
+export const SUPPORTED_ARCHS: readonly number[] = [Arch.Wasm32, Arch.XtensaLx7];
 
 function toInfo(m: FwModule): NativeModuleInfo {
   return {

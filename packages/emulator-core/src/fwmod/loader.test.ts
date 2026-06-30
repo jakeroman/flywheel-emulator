@@ -3,17 +3,27 @@ import { Arch, FwModule } from "./format.js";
 import { loadFwmod } from "./loader.js";
 
 describe("loadFwmod", () => {
-  it("loads a valid module but marks it not-runnable until Phase 5", () => {
+  it("marks a supported-arch module (xtensa-lx7) runnable", () => {
     const bytes = new FwModule({
       payload: new Uint8Array([1, 2, 3, 4]),
       arch: Arch.XtensaLx7,
     }).encode();
     const r = loadFwmod(bytes);
     expect(r.loadable).toBe(true);
-    expect(r.runnable).toBe(false);
-    expect(r.reason).toMatch(/no execution backend/);
+    expect(r.runnable).toBe(true); // the call0 interpreter backend exists
     expect(r.info?.archLabel).toBe("xtensa-lx7");
     expect(r.problems).toEqual([]);
+  });
+
+  it("marks an arch with no execution backend loadable but not runnable", () => {
+    const bytes = new FwModule({
+      payload: new Uint8Array([1, 2, 3, 4]),
+      arch: Arch.Unknown,
+    }).encode();
+    const r = loadFwmod(bytes);
+    expect(r.loadable).toBe(true);
+    expect(r.runnable).toBe(false);
+    expect(r.reason).toMatch(/no execution backend/);
   });
 
   it("does not throw on undecodable bytes", () => {
