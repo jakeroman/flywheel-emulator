@@ -23,6 +23,9 @@ python -m fwmod build examples/hello.c -o hello.fwmod --arch host-x86
 python -m fwmod build examples/hello.c -o hello.fwmod \
     --arch xtensa-lx7 --prefix xtensa-esp32s3-elf-
 
+# Compile to WebAssembly to run in the browser emulator now (needs LLVM clang):
+python -m fwmod build examples/hello.c -o hello.fwmod --arch wasm32
+
 # Wrap an already-built flat binary (no compiler needed).
 python -m fwmod pack payload.bin -o mod.fwmod --arch xtensa-lx7 --entry-offset 0
 
@@ -65,8 +68,16 @@ naming, so the same pipeline serves dev and hardware targets.
 
 ```sh
 python -m unittest discover -s tests
-python fixtures/make_golden.py   # regenerate the cross-language fixture
+python fixtures/make_golden.py            # regenerate the cross-language fixture
+node fixtures/make_wasm_fixture.mjs       # regenerate the wasm32 conformance fixture
 ```
+
+The `wasm32` build path (`--arch wasm32`) compiles C to WebAssembly via clang +
+wasm-ld for the in-browser `WasmModuleRuntime` (Phase 5). Its module ABI is
+pinned by `examples/hello-wasm.wat` and exercised by the emulator-core tests;
+the clang C→wasm compile itself is verified once an LLVM toolchain is installed
+(no `clang` on this machine yet) — like the host build success path, it isn't run
+in CI.
 
 The unittests (and CI) cover the codec, the golden cross-language fixture, and
 the `pack` / `inspect` / `validate` paths — none of which need a C compiler. The

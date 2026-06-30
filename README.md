@@ -105,5 +105,12 @@ On-screen buttons can also be clicked/tapped.
   manifest + resolver; the BIOS resolves, loads, and integrity-checks declared
   native modules (execution lands in Phase 5). The toolchain is arch-pluggable:
   a host gcc for dev today, `xtensa-esp32s3-elf-gcc` for hardware.
-- **Phase 5 — Dynamic C module execution.** Evaluate QEMU/Wokwi ESP32 cores
-  before hand-rolling an interpreter; build a faithfulness validation harness.
+- **Phase 5 — Dynamic C module execution.** 🚧 Research settled the approach
+  (QEMU→WASM and Wokwi rejected — GPL/size/proprietary/no-self-host). The
+  **wasm32 backend** ships first: native C modules compile to WebAssembly and
+  run in-browser through the same `fw` jump table (`WasmModuleRuntime`), gated by
+  the loader's `SUPPORTED_ARCHS`. A backend-agnostic **faithfulness harness**
+  records each module's HAL effect-stream so behavior is deterministic and
+  comparable across backends. A hand-rolled Xtensa-LX7 interpreter (the
+  hardware-faithful backend, `-mabi=call0`) is the next milestone, validated
+  differentially against wasm32 through the same harness.

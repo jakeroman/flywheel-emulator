@@ -67,7 +67,7 @@ export function LuaPanel() {
               <span className="fw-lua__module-name">{m.name}</span>
               <span className="fw-lua__module-arch">{m.arch}</span>
               <span className="fw-lua__module-state">
-                {m.loadable ? (m.runnable ? "ready" : "loaded") : "invalid"}
+                {m.loadable ? "loaded" : "invalid"}
               </span>
             </li>
           ))}

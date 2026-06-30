@@ -12,6 +12,10 @@ export * from "./lua/index.js";
 // Native (.fwmod) module container: codec, integrity check, and loader.
 export * from "./fwmod/index.js";
 
+// Execution backends (frame-driven runtime contract) + conformance harness.
+export * from "./exec/index.js";
+export * from "./harness/index.js";
+
 // BIOS: boot, game selector, settings, power management.
 export * from "./bios/index.js";
 

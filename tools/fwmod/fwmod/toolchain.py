@@ -45,6 +45,14 @@ _CFLAGS = [
     "-Wextra",
 ]
 
+# Arch-specific compile flags appended to _CFLAGS. The Xtensa call0 ABI drops
+# register windows for a conventional stack-based calling convention — the
+# single highest-leverage choice for a tractable future Xtensa interpreter
+# (Phase 5 hardware-faithful backend), and harmless to bake in now.
+_ARCH_CFLAGS: dict[Arch, list[str]] = {
+    Arch.XTENSA_LX7: ["-mabi=call0"],
+}
+
 
 class ToolchainError(Exception):
     """A tool is missing or a compile/link/objcopy step failed."""
@@ -161,6 +169,7 @@ def compile_module(
     try:
         obj = workdir / "module.o"
         cflags = list(_CFLAGS)
+        cflags += _ARCH_CFLAGS.get(arch, [])
         for inc in include_dirs:
             cflags += ["-I", str(inc)]
         cflags += list(extra_cflags)
@@ -296,3 +305,84 @@ def _missing_message(missing: list[str], prefix: str, bindir: str | None) -> str
             "or pass --toolchain-dir <bin> / --cc <path-to-gcc>."
         )
     return "\n".join(lines)
+
+
+# ---- wasm32 build path (clang + wasm-ld) -----------------------------------
+# A distinct pipeline from the gcc/ld/objcopy flat-binary path: clang targets
+# wasm32, wasm-ld produces the module, and the .wasm IS the .fwmod payload (no
+# fixed-base link or objcopy). Verified once an LLVM toolchain is installed; the
+# runtime ABI it targets is already exercised by examples/hello-wasm.wat and the
+# WasmModuleRuntime tests, and fw_api.h's __wasm__ branch maps the C calls to it.
+
+_WASM_CFLAGS = [
+    "-Os",
+    "-nostdlib",
+    "-ffreestanding",
+    "-fno-builtin",
+    "-Wall",
+    "-Wextra",
+]
+# --no-entry: a freestanding module, no _start. --export-table: expose
+# __indirect_function_table so the host can call the function pointers fw_main
+# returns. (fw_main is exported via its export_name attribute in fw_api.h, and
+# memory is exported by wasm-ld by default.)
+_WASM_LDFLAGS = ["-Wl,--no-entry", "-Wl,--export-table"]
+
+
+def find_clang(cc: str | None = None, bindir: str | None = None) -> str:
+    """Locate clang for the wasm32 build: explicit --cc, then <bindir>/clang,
+    then clang on PATH."""
+    if cc:
+        if Path(cc).exists() or shutil.which(cc):
+            return cc
+        raise ToolchainError(f"clang not found at {cc!r}")
+    if bindir:
+        for ext in (".exe", "") if os.name == "nt" else ("",):
+            p = Path(bindir) / f"clang{ext}"
+            if p.exists():
+                return str(p)
+    found = shutil.which("clang")
+    if not found:
+        raise ToolchainError(
+            "clang not found. Install LLVM (clang + wasm-ld) and put it on PATH, "
+            "or pass --cc <path-to-clang> / --toolchain-dir <llvm bin>."
+        )
+    return found
+
+
+def compile_wasm_module(
+    clang: str,
+    source: str | os.PathLike[str],
+    *,
+    include_dirs: tuple[str, ...] = (),
+    extra_cflags: tuple[str, ...] = (),
+    verbose: bool = False,
+) -> FwModule:
+    """Compile a C source to a wasm32 module; the .wasm becomes the payload."""
+    src = Path(source)
+    if not src.exists():
+        raise ToolchainError(f"source not found: {src}")
+
+    # clang spawns wasm-ld from its own bin dir; keep that discoverable when
+    # clang is invoked by absolute path off PATH.
+    env = os.environ.copy()
+    clang_dir = os.path.dirname(clang)
+    if clang_dir:
+        env["PATH"] = os.pathsep.join((clang_dir, env.get("PATH", "")))
+
+    workdir = Path(tempfile.mkdtemp(prefix="fwmod-wasm-"))
+    try:
+        out = workdir / "module.wasm"
+        args = [clang, "--target=wasm32", *_WASM_CFLAGS, *_WASM_LDFLAGS]
+        for inc in include_dirs:
+            args += ["-I", str(inc)]
+        args += list(extra_cflags) + [str(src), "-o", str(out)]
+        _run(args, verbose, env=env)
+        payload = out.read_bytes()
+        if not payload:
+            raise ToolchainError("clang produced an empty .wasm")
+        return FwModule(
+            payload=payload, arch=Arch.WASM32, entry_offset=0, bss_size=0, load_addr=0
+        )
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)

@@ -97,4 +97,59 @@ typedef struct fw_module {
  */
 const fw_module_t *fw_main(const fw_api_t *api);
 
+/*
+ * wasm32 bridge (Phase 5 dev/in-browser backend).
+ *
+ * On a wasm target the host can't hand the module a struct of host function
+ * pointers, so each fw_api call is a wasm IMPORT from module "env" (names match
+ * the runtime's WasmModuleRuntime env object). We build a static fw_api_t from
+ * those imports and expose the SAME fw_main(api) contract: the user's fw_main is
+ * renamed and an exported wrapper calls it with the static table, so one .c
+ * compiles unchanged for both native (Xtensa/host) and wasm targets.
+ *
+ * NOTE: the C-side mapping is verified once an LLVM toolchain (clang + wasm-ld)
+ * is available; the runtime ABI it targets is already exercised end-to-end by
+ * examples/hello-wasm.wat + the WasmModuleRuntime tests.
+ */
+#ifdef __wasm__
+#define FW_IMPORT(n) __attribute__((import_module("env"), import_name(#n)))
+
+FW_IMPORT(btn) bool __fwi_btn(int32_t);
+FW_IMPORT(btnp) bool __fwi_btnp(int32_t);
+FW_IMPORT(cls) void __fwi_cls(bool);
+FW_IMPORT(pixel) void __fwi_pixel(int32_t, int32_t, bool);
+FW_IMPORT(line) void __fwi_line(int32_t, int32_t, int32_t, int32_t, bool);
+FW_IMPORT(rect) void __fwi_rect(int32_t, int32_t, int32_t, int32_t, bool);
+FW_IMPORT(rectfill) void __fwi_rectfill(int32_t, int32_t, int32_t, int32_t, bool);
+FW_IMPORT(circle) void __fwi_circle(int32_t, int32_t, int32_t, bool);
+FW_IMPORT(circfill) void __fwi_circfill(int32_t, int32_t, int32_t, bool);
+FW_IMPORT(print) void __fwi_print(const char *, int32_t, int32_t, bool);
+FW_IMPORT(text_width) int32_t __fwi_text_width(const char *);
+FW_IMPORT(fs_read) int32_t __fwi_fs_read(const char *, char *, int32_t);
+FW_IMPORT(fs_write) int32_t __fwi_fs_write(const char *, const char *, int32_t);
+FW_IMPORT(fs_exists) bool __fwi_fs_exists(const char *);
+FW_IMPORT(tone) void __fwi_tone(int32_t, int32_t);
+FW_IMPORT(time_ms) uint32_t __fwi_time_ms(void);
+FW_IMPORT(log) void __fwi_log(const char *);
+
+static const fw_api_t __fw_table = {
+    FW_ABI_VERSION, FW_SCREEN_W, FW_SCREEN_H,
+    __fwi_btn, __fwi_btnp,
+    __fwi_cls, __fwi_pixel, __fwi_line, __fwi_rect, __fwi_rectfill,
+    __fwi_circle, __fwi_circfill, __fwi_print, __fwi_text_width,
+    __fwi_fs_read, __fwi_fs_write, __fwi_fs_exists,
+    __fwi_tone, __fwi_time_ms, __fwi_log};
+
+/* The user's fw_main is renamed; the exported wrapper feeds it the static
+ * table. The host calls the export "fw_main" with a dummy arg. */
+#define fw_main __fw_user_main
+const fw_module_t *__fw_user_main(const fw_api_t *api);
+
+__attribute__((export_name("fw_main"))) const fw_module_t *__fw_entry(
+    const fw_api_t *ignored) {
+    (void)ignored;
+    return __fw_user_main(&__fw_table);
+}
+#endif /* __wasm__ */
+
 #endif /* FW_API_H */

@@ -20,6 +20,8 @@ from .toolchain import (
     Toolchain,
     ToolchainError,
     compile_module,
+    compile_wasm_module,
+    find_clang,
 )
 
 _PKG_ROOT = Path(__file__).resolve().parent.parent
@@ -110,27 +112,40 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _cmd_build(args: argparse.Namespace) -> int:
     arch = Arch.from_name(args.arch)
-    tc = Toolchain.discover(
-        prefix=args.prefix,
-        bindir=args.toolchain_dir,
-        cc=args.cc,
-        ld=args.ld,
-        objcopy=args.objcopy,
-    )
     includes = (str(DEFAULT_INCLUDE), *args.include)
-    ld_script = args.ld_script or (
-        str(DEFAULT_LD_SCRIPT) if DEFAULT_LD_SCRIPT.exists() else None
-    )
-    module = compile_module(
-        tc,
-        args.source,
-        arch,
-        load_addr=args.load_addr,
-        include_dirs=includes,
-        ld_script=ld_script,
-        extra_cflags=tuple(args.cflag),
-        verbose=args.verbose,
-    )
+
+    if arch is Arch.WASM32:
+        # wasm32 is a distinct pipeline: clang + wasm-ld, the .wasm IS the
+        # payload (no fixed-base link / objcopy). See compile_wasm_module.
+        module = compile_wasm_module(
+            find_clang(args.cc, args.toolchain_dir),
+            args.source,
+            include_dirs=includes,
+            extra_cflags=tuple(args.cflag),
+            verbose=args.verbose,
+        )
+    else:
+        tc = Toolchain.discover(
+            prefix=args.prefix,
+            bindir=args.toolchain_dir,
+            cc=args.cc,
+            ld=args.ld,
+            objcopy=args.objcopy,
+        )
+        ld_script = args.ld_script or (
+            str(DEFAULT_LD_SCRIPT) if DEFAULT_LD_SCRIPT.exists() else None
+        )
+        module = compile_module(
+            tc,
+            args.source,
+            arch,
+            load_addr=args.load_addr,
+            include_dirs=includes,
+            ld_script=ld_script,
+            extra_cflags=tuple(args.cflag),
+            verbose=args.verbose,
+        )
+
     problems = module.validate()
     if problems:
         print("error: built module failed validation:", file=sys.stderr)

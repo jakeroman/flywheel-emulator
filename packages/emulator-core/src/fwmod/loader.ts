@@ -11,7 +11,7 @@
  * must not throw out of game resolution — it surfaces as problems instead.
  */
 
-import { ABI_VERSION, archName, decodeFwmod, FwModule } from "./format.js";
+import { ABI_VERSION, Arch, archName, decodeFwmod, FwModule } from "./format.js";
 
 /** Flat description of a decoded module, safe to hand to UI / dev tools. */
 export interface NativeModuleInfo {
@@ -44,8 +44,9 @@ export interface FwmodInspection {
   reason: string | null;
 }
 
-/** Architectures the emulator can currently execute. Empty until Phase 5. */
-export const SUPPORTED_ARCHS: readonly number[] = [];
+/** Architectures the emulator can currently execute. Phase 5 adds wasm32 (the
+ *  WasmModuleRuntime backend); the Xtensa interpreter will add xtensa-lx7. */
+export const SUPPORTED_ARCHS: readonly number[] = [Arch.Wasm32];
 
 function toInfo(m: FwModule): NativeModuleInfo {
   return {

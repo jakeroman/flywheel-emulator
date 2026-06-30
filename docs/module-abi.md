@@ -62,8 +62,29 @@ breaking change and requires a new major ABI. A loaded module's `abi_version`
 python -m fwmod build mymod.c -o mymod.fwmod          # host (dev) target
 python -m fwmod build mymod.c -o mymod.fwmod \
     --arch xtensa-lx7 --cc xtensa-esp32s3-elf-gcc     # real hardware target
+python -m fwmod build mymod.c -o mymod.fwmod \
+    --arch wasm32                                     # in-browser dev target (clang)
 ```
 
-The CLI compiles against `fw_api.h`, links the code to the fixed dynamic-region
-base (forcing `fw_main` to offset `0`), `objcopy`s to a flat binary, and wraps it
-in a validated `.fwmod`. See [`tools/fwmod/README.md`](../tools/fwmod/README.md).
+For native targets the CLI compiles against `fw_api.h`, links the code to the
+fixed dynamic-region base (forcing `fw_main` to offset `0`), `objcopy`s to a flat
+binary, and wraps it in a validated `.fwmod`. See
+[`tools/fwmod/README.md`](../tools/fwmod/README.md).
+
+## wasm32 target (Phase 5, in-browser execution)
+
+The `wasm32` arch compiles the **same C source** to WebAssembly so it runs in
+the browser emulator today via `WasmModuleRuntime` — no Xtensa emulation. The
+`#ifdef __wasm__` branch of `fw_api.h` turns each `fw_api` call into a wasm
+import from module `env` (names match the runtime's import object), builds a
+static `fw_api_t` from them, and exports a `fw_main` wrapper that passes that
+table to your `fw_main`. The module **exports** its `memory` (the build uses no
+`--import-memory`; `env.memory` is *not* an import) and its
+`__indirect_function_table`; the host calls `fw_main(0)`, reads the returned
+`fw_module_t` (three table indices), and drives `init`/`update`/`draw`.
+
+This is a **dev/iteration** backend: it executes the C *semantics* via LLVM, not
+the Xtensa ISA or ESP32-S3 timing — fidelity is the job of the later Xtensa
+interpreter. The hand-authored [`examples/hello-wasm.wat`](../tools/fwmod/examples/hello-wasm.wat)
+pins this ABI and is exercised end-to-end by the `WasmModuleRuntime` tests; the
+clang C→wasm path is verified once an LLVM toolchain is installed.

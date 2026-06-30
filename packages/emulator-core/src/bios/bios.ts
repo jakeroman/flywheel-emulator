@@ -37,7 +37,9 @@ export interface BiosModuleStatus {
   codeSize: number;
   /** Decoded, valid, and ABI-compatible. */
   loadable: boolean;
-  /** The host can execute it now (always false until Phase 5's backend). */
+  /** The host has an execution backend for this arch (wasm32 as of Phase 5).
+   *  Note: the BIOS does not yet *launch* native modules — it only loads and
+   *  integrity-checks them, so this is capability, not "currently running". */
   runnable: boolean;
   /** Why it isn't runnable/loadable, for display. */
   reason: string | null;
@@ -409,9 +411,11 @@ export class Bios {
         runnable: result.runnable,
         reason: result.reason,
       };
+      // "loaded" not "ready": the host has a backend (runnable) but the BIOS
+      // launch pipeline doesn't execute native modules yet — don't overpromise.
       const note = status.loadable
         ? status.runnable
-          ? "ready"
+          ? "loaded"
           : status.reason ?? "loadable"
         : `invalid: ${status.reason ?? "see problems"}`;
       this.events.emit("log", `module ${m.name} [${status.arch}]: ${note}`);

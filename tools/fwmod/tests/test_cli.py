@@ -73,6 +73,19 @@ class TestCli(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn("INVALID", out)
 
+    def test_build_wasm32_reports_missing_clang(self):
+        # The wasm32 build routes to clang; with a bogus --cc it must fail
+        # cleanly (exercises the wasm path + find_clang error without LLVM).
+        with tempfile.TemporaryDirectory() as d:
+            src = Path(d) / "m.c"
+            src.write_text("const void *fw_main(const void *a){return a;}\n")
+            out = Path(d) / "m.fwmod"
+            code, _, err = run(
+                ["build", str(src), "-o", str(out), "--arch", "wasm32", "--cc", "no-clang-here"]
+            )
+            self.assertEqual(code, 1)
+            self.assertIn("not found", err.lower())
+
     def test_build_reports_missing_toolchain(self):
         # With an explicit, nonexistent compiler, build must fail cleanly (not
         # crash) — exercising the toolchain-discovery error path without needing
