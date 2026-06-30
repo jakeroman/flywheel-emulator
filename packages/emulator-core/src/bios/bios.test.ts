@@ -28,6 +28,19 @@ function tap(device: EmulatedFlywheelDevice, bios: Bios, button: Button): void {
   bios.update(0.05);
 }
 
+function litPixels(device: EmulatedFlywheelDevice): number {
+  const buf = device.display.getPackedBuffer();
+  let n = 0;
+  for (let i = 0; i < buf.length; i++) {
+    let b = buf[i];
+    while (b) {
+      n += b & 1;
+      b >>= 1;
+    }
+  }
+  return n;
+}
+
 describe("scanGames", () => {
   it("finds games with a main.lua and reads titles from meta.lua", async () => {
     const sd = new MemorySDCard();
@@ -136,6 +149,14 @@ describe("Bios", () => {
     const report = bios.bootChargeReport;
     expect(report?.gainedLevel).toBeCloseTo(0.4, 5);
     expect(report?.estPlaytimeMin).toBeGreaterThan(0);
+  });
+
+  it("clears the display on power-off", async () => {
+    const { device, bios } = await bootedWithGames();
+    bios.draw(); // render the menu
+    expect(litPixels(device)).toBeGreaterThan(0);
+    bios.shutdown();
+    expect(litPixels(device)).toBe(0);
   });
 
   it("drops to light-sleep when idle in a menu", async () => {

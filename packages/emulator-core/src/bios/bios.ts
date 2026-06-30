@@ -151,6 +151,9 @@ export class Bios {
     this.dispose();
     this.currentGame = null;
     this.setScreen("boot");
+    // Power-off blanks the display. (Light/deep-sleep never call shutdown, so
+    // the bistable memory LCD holds its last frame while sleeping.)
+    this.gfx.clear();
   }
 
   /** Return to the game selector (stopping a running game). */
