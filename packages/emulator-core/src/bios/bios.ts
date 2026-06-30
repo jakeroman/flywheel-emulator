@@ -8,6 +8,11 @@ import {
   type LuaRuntimeOptions,
   type LuaStatus,
 } from "../lua/lua-runtime.js";
+import { WasmModuleRuntime } from "../exec/wasm-runtime.js";
+import type {
+  ModuleRuntime,
+  ModuleRuntimeCallbacks,
+} from "../exec/module-runtime.js";
 import { POWER_CONSTANTS } from "../device/power-model.js";
 import { scanGames, type GameEntry } from "./game-scan.js";
 import { resolveGame, type ResolvedModule } from "./manifest.js";
@@ -73,14 +78,19 @@ const H = 240;
 /**
  * The Flywheel BIOS: a host-side state machine that boots the device, scans the
  * SD card for games, presents the game selector and settings, launches games
- * (handing the display to the Lua runtime), and manages power modes. It runs
- * against the HAL + Graphics — it is not itself a Lua app, it's the system that
- * launches them. The host run loop polls the gamepad, then calls update()+draw().
+ * (handing the display to the Lua or wasm-module runtime per the entry type),
+ * and manages power modes. It runs against the HAL + Graphics — it is not itself
+ * an app, it's the system that launches them. The host run loop polls the
+ * gamepad, then calls update()+draw().
  */
 export class Bios {
   readonly events = new Emitter<BiosEvents>();
   private readonly gfx: Graphics;
-  private readonly runtime: LuaRuntime;
+  // Two execution backends, both ModuleRuntime; start() points `active` at one
+  // per game by entry type (.lua → Lua, .fwmod → wasm).
+  private readonly lua: LuaRuntime;
+  private readonly wasm: WasmModuleRuntime;
+  private active: ModuleRuntime;
 
   private screen: BiosScreen = "boot";
   private games: GameEntry[] = [];
@@ -101,25 +111,24 @@ export class Bios {
   ) {
     this.gfx = new Graphics(device.display);
     this.settings = loadSettings(device.sd);
-    this.runtime = new LuaRuntime(
-      device,
-      {
-        onLog: (m) => this.events.emit("log", m),
-        onError: (e) => {
-          this.error = e.message;
-          this.events.emit("error", e.message);
-          this.emit();
-        },
-        // The async idle→running flip happens after start()'s synchronous emit;
-        // mirror it so the dev UI's game-status badge isn't stuck on "idle".
-        onStatus: () => this.emit(),
+    const callbacks: ModuleRuntimeCallbacks = {
+      onLog: (m) => this.events.emit("log", m),
+      onError: (e) => {
+        this.error = e.message;
+        this.events.emit("error", e.message);
+        this.emit();
       },
-      options,
-    );
+      // The async idle→running flip happens after start()'s synchronous emit;
+      // mirror it so the dev UI's game-status badge isn't stuck on "idle".
+      onStatus: () => this.emit(),
+    };
+    this.lua = new LuaRuntime(device, callbacks, options);
+    this.wasm = new WasmModuleRuntime(device, callbacks);
+    this.active = this.lua;
   }
 
   get gameStatus(): LuaStatus {
-    return this.runtime.status;
+    return this.active.status;
   }
 
   /** The charge comparison computed at the last boot (null before booting). */
@@ -134,7 +143,7 @@ export class Bios {
       selectedIndex: this.selected,
       currentGameTitle: this.current?.title ?? null,
       currentGameModules: this.current?.modules ?? [],
-      gameStatus: this.runtime.status,
+      gameStatus: this.active.status,
       error: this.error,
     };
   }
@@ -211,9 +220,10 @@ export class Bios {
     });
   }
 
-  /** Free the owned Lua engine, without the power-off settings side effects. */
+  /** Free both execution backends, without the power-off settings side effects. */
   dispose(): void {
-    void this.runtime.dispose();
+    void this.lua.dispose();
+    void this.wasm.dispose();
   }
 
   update(dtSeconds: number): void {
@@ -246,7 +256,7 @@ export class Bios {
         break;
       case "game":
         if (gp.wasPressed(Button.Menu)) this.exitGame();
-        else this.runtime.update(dtSeconds);
+        else this.active.update(dtSeconds);
         break;
     }
 
@@ -269,7 +279,7 @@ export class Bios {
         this.drawSettings();
         break;
       case "game":
-        this.runtime.draw();
+        this.active.draw();
         if (this.error) this.drawGameError();
         break;
     }
@@ -344,8 +354,9 @@ export class Bios {
 
   /**
    * The single launch pipeline: surface manifest warnings, inspect any declared
-   * native modules, then hand the display to the Lua runtime for the entry
-   * script. Shared by the menu launcher and the dev launchScript() shortcut.
+   * native modules, then run the entry on the right backend — a `.fwmod` entry
+   * runs as a native module (wasm), anything else as a Lua script. Shared by the
+   * menu launcher and the dev launchScript() shortcut.
    */
   private async start(resolved: {
     title: string;
@@ -354,6 +365,7 @@ export class Bios {
     warnings: ReadonlyArray<string>;
   }): Promise<void> {
     this.error = null;
+    void this.active.dispose(); // stop whatever ran last before switching
     for (const w of resolved.warnings) this.events.emit("log", w);
     this.current = {
       title: resolved.title,
@@ -364,10 +376,15 @@ export class Bios {
     // setScreen no-ops on a game→game relaunch; emit so the new title/modules
     // still reach the UI.
     this.emit();
+    const entry = resolved.entryPath;
     try {
-      await this.runtime.load(
-        this.device.sd.readTextFileSync(resolved.entryPath),
-      );
+      if (entry.endsWith(".fwmod")) {
+        this.active = this.wasm;
+        await this.wasm.load(this.device.sd.readFileSync(entry));
+      } else {
+        this.active = this.lua;
+        await this.lua.load(this.device.sd.readTextFileSync(entry));
+      }
     } catch (e) {
       this.error = e instanceof Error ? e.message : String(e);
       this.emit();
@@ -424,7 +441,7 @@ export class Bios {
   }
 
   private exitGame(): void {
-    void this.runtime.dispose();
+    void this.active.dispose();
     this.current = null;
     this.error = null;
     this.idleMs = 0;

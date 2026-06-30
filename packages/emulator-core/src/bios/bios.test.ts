@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { EmulatedFlywheelDevice } from "../device/flywheel-device.js";
 import { MemorySDCard, seedMockContent } from "../device/memory-sd.js";
@@ -175,6 +178,31 @@ describe("Bios", () => {
     const report = bios.bootChargeReport;
     expect(report?.gainedLevel).toBeCloseTo(0.4, 5);
     expect(report?.estPlaytimeMin).toBeGreaterThan(0);
+  });
+
+  it("launches a native wasm32 module as a game (not Lua)", async () => {
+    // The committed wasm32 fixture, placed on the SD as a game's entry.
+    const fixture = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../../../tools/fwmod/fixtures/hello-wasm32.fwmod",
+    );
+    const device = new EmulatedFlywheelDevice();
+    device.sd.mkdirSync("/games/native", true);
+    device.sd.writeFileSync(
+      "/games/native/app.fwmod",
+      new Uint8Array(readFileSync(fixture)),
+    );
+
+    const bios = new Bios(device);
+    // launchScript awaits start(), which routes a .fwmod entry to the wasm
+    // backend and awaits instantiation — deterministic, unlike the menu path.
+    await bios.launchScript("/games/native/app.fwmod");
+
+    expect(bios.snapshot().screen).toBe("game");
+    expect(bios.snapshot().gameStatus).toBe("running");
+    bios.draw();
+    expect(litPixels(device)).toBeGreaterThan(0); // the C/wasm module drew
+    bios.dispose();
   });
 
   it("clears the display on power-off", async () => {
