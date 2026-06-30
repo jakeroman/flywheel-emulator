@@ -106,6 +106,9 @@ export class LuaRuntime {
       this.updateFn = asFn(engine.global.get("_update"));
       this.drawFn = asFn(engine.global.get("_draw"));
       this.setStatus("running");
+      // Start each app on a clean framebuffer so switching scripts doesn't
+      // leave the previous one's frozen frame on the bistable display.
+      this.gfx.clear();
       asFn(engine.global.get("_init"))?.();
       return this._status === "running";
     } catch (error) {

@@ -1,6 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { EmulatedFlywheelDevice } from "../device/flywheel-device.js";
+import { seedMockContent } from "../device/memory-sd.js";
 import { LuaRuntime } from "./lua-runtime.js";
+
+function inkCount(device: EmulatedFlywheelDevice): number {
+  const buf = device.display.getPackedBuffer();
+  let bits = 0;
+  for (let i = 0; i < buf.length; i++) {
+    let b = buf[i];
+    while (b) {
+      bits += b & 1;
+      b >>= 1;
+    }
+  }
+  return bits;
+}
 
 describe("LuaRuntime", () => {
   it("runs the lifecycle and draws through fw.gfx", async () => {
@@ -96,5 +110,28 @@ describe("LuaRuntime", () => {
     expect(rt.status).toBe("error");
     expect(errors).toHaveLength(1);
     await rt.dispose();
+  });
+
+  it("loads and runs every seeded game without error", async () => {
+    const device = new EmulatedFlywheelDevice();
+    await seedMockContent(device.sd);
+
+    for (const path of ["/games/demo/main.lua", "/games/snake/main.lua"]) {
+      const errors: Error[] = [];
+      const rt = new LuaRuntime(device, { onError: (e) => errors.push(e) });
+      const ok = await rt.load(device.sd.readTextFileSync(path));
+      expect(ok, path).toBe(true);
+
+      // A few frames of input + update + draw.
+      for (let i = 0; i < 12; i++) {
+        device.gamepad.poll();
+        rt.update(0.12);
+        rt.draw();
+      }
+      expect(errors, path).toEqual([]);
+      expect(rt.status, path).toBe("running");
+      expect(inkCount(device), path).toBeGreaterThan(50); // it drew something
+      await rt.dispose();
+    }
   });
 });

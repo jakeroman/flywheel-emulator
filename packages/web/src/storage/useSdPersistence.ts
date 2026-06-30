@@ -1,9 +1,6 @@
 import { useEffect } from "react";
-import {
-  seedMockContent,
-  type EmulatedFlywheelDevice,
-} from "@flywheel/emulator-core";
-import { loadFromIndexedDb, saveToIndexedDb } from "./sd-persistence.js";
+import type { EmulatedFlywheelDevice } from "@flywheel/emulator-core";
+import { ensureSeeded, saveToIndexedDb } from "./sd-persistence.js";
 
 const SAVE_DEBOUNCE_MS = 500;
 
@@ -14,17 +11,9 @@ const SAVE_DEBOUNCE_MS = 500;
  */
 export function useSdPersistence(device: EmulatedFlywheelDevice): void {
   useEffect(() => {
-    let alive = true;
     let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
-    void (async () => {
-      const loaded = await loadFromIndexedDb(device.sd).catch(() => false);
-      if (!alive) return;
-      if (!loaded) {
-        await seedMockContent(device.sd);
-        await saveToIndexedDb(device.sd).catch(() => {});
-      }
-    })();
+    void ensureSeeded(device.sd);
 
     const scheduleSave = () => {
       if (saveTimer) clearTimeout(saveTimer);
@@ -35,7 +24,6 @@ export function useSdPersistence(device: EmulatedFlywheelDevice): void {
 
     const off = device.sd.events.on("change", scheduleSave);
     return () => {
-      alive = false;
       off();
       if (saveTimer) clearTimeout(saveTimer);
     };

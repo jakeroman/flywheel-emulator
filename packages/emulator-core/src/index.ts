@@ -18,6 +18,7 @@ export { EmulatedPowerModel, POWER_CONSTANTS } from "./device/power-model.js";
 export {
   MemorySDCard,
   seedMockContent,
+  SEED_VERSION,
   type SDEntry,
 } from "./device/memory-sd.js";
 export {

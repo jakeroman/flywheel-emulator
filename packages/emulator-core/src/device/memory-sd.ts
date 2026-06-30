@@ -249,9 +249,94 @@ function _draw()
 end
 `;
 
-/** Seed an SD card with a little mock content for the file browser / demos. */
+/** A complete second game: grid Snake with food, growth, and game-over. */
+const SNAKE_LUA = `-- Snake: D-pad turns, eat the food, don't bite yourself. A retries.
+local CELL, OX, OY, COLS, ROWS = 10, 10, 16, 37, 20
+local snake, dir, food, dead, score, acc
+
+local function place_food()
+  while true do
+    local fx, fy = math.random(0, COLS - 1), math.random(0, ROWS - 1)
+    local clash = false
+    for i = 1, #snake do
+      if snake[i].x == fx and snake[i].y == fy then clash = true break end
+    end
+    if not clash then food = { x = fx, y = fy } return end
+  end
+end
+
+local function reset()
+  snake = { { x = 8, y = 10 }, { x = 7, y = 10 }, { x = 6, y = 10 } }
+  dir, dead, score, acc = { x = 1, y = 0 }, false, 0, 0
+  place_food()
+end
+
+function _init() reset() end
+
+local STEP = 0.12
+
+local function step()
+  local head = snake[1]
+  local nx, ny = head.x + dir.x, head.y + dir.y
+  if nx < 0 or nx >= COLS or ny < 0 or ny >= ROWS then dead = true return end
+  for i = 1, #snake do
+    if snake[i].x == nx and snake[i].y == ny then dead = true return end
+  end
+  table.insert(snake, 1, { x = nx, y = ny })
+  if nx == food.x and ny == food.y then
+    score = score + 1
+    fw.sound.tone(880, 40)
+    place_food()
+  else
+    table.remove(snake)
+  end
+end
+
+function _update(dt)
+  if dead then
+    if fw.btnp(fw.A) then reset() end
+    return
+  end
+  if fw.btnp(fw.UP) and dir.y == 0 then dir = { x = 0, y = -1 } end
+  if fw.btnp(fw.DOWN) and dir.y == 0 then dir = { x = 0, y = 1 } end
+  if fw.btnp(fw.LEFT) and dir.x == 0 then dir = { x = -1, y = 0 } end
+  if fw.btnp(fw.RIGHT) and dir.x == 0 then dir = { x = 1, y = 0 } end
+  acc = acc + dt
+  while acc >= STEP do
+    acc = acc - STEP
+    step()
+    if dead then fw.sound.tone(160, 220) break end
+  end
+end
+
+local function cell(cx, cy)
+  fw.gfx.rectfill(OX + cx * CELL, OY + cy * CELL, CELL - 1, CELL - 1)
+end
+
+function _draw()
+  fw.gfx.cls()
+  fw.gfx.print("SNAKE", 10, 4)
+  fw.gfx.print("SCORE " .. score, fw.width - 72, 4)
+  fw.gfx.rect(OX - 2, OY - 2, COLS * CELL + 3, ROWS * CELL + 3)
+  for i = 1, #snake do cell(snake[i].x, snake[i].y) end
+  fw.gfx.rectfill(OX + food.x * CELL + 2, OY + food.y * CELL + 2, CELL - 5, CELL - 5)
+  if dead then
+    fw.gfx.rectfill(135, 100, 130, 38, false)
+    fw.gfx.rect(135, 100, 130, 38)
+    fw.gfx.print("GAME OVER", 162, 110)
+    fw.gfx.print("A = RETRY", 164, 122)
+  end
+end
+`;
+
+/**
+ * Seed version. Bump this when the bundled default content changes so existing
+ * users (whose SD is persisted in IndexedDB) get the updated demos re-seeded.
+ */
+export const SEED_VERSION = 2;
+
+/** Seed an SD card with the bundled demo games and default system files. */
 export async function seedMockContent(sd: MemorySDCard): Promise<void> {
-  sd.mkdirSync("/games", true);
   sd.mkdirSync("/games/demo", true);
   sd.writeFileSync("/games/demo/main.lua", DEMO_LUA);
   sd.writeFileSync(
@@ -259,10 +344,8 @@ export async function seedMockContent(sd: MemorySDCard): Promise<void> {
     'return { title = "Bounce Demo" }\n',
   );
   sd.mkdirSync("/games/snake", true);
-  sd.writeFileSync(
-    "/games/snake/main.lua",
-    "-- Snake (placeholder)\nfunction _init() end\nfunction _update() end\nfunction _draw() end\n",
-  );
+  sd.writeFileSync("/games/snake/main.lua", SNAKE_LUA);
+  sd.writeFileSync("/games/snake/meta.lua", 'return { title = "Snake" }\n');
   sd.mkdirSync("/system", true);
   sd.writeFileSync(
     "/system/settings.json",

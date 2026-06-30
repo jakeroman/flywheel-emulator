@@ -1,7 +1,30 @@
-import type { MemorySDCard, SDEntry } from "@flywheel/emulator-core";
+import {
+  SEED_VERSION,
+  seedMockContent,
+  type MemorySDCard,
+  type SDEntry,
+} from "@flywheel/emulator-core";
 import { idbGet, idbSet } from "./idb.js";
 
 const SNAPSHOT_KEY = "sd-snapshot";
+const SEED_VERSION_KEY = "seed-version";
+
+/**
+ * Bring the SD card up: load the persisted snapshot, and (re-)seed the bundled
+ * default content if nothing is stored yet or the seed version has changed.
+ * Re-seeding only writes the default game paths, so a user's own files survive.
+ */
+export async function ensureSeeded(sd: MemorySDCard): Promise<void> {
+  const loaded = await loadFromIndexedDb(sd).catch(() => false);
+  const storedVersion = await idbGet<number>(SEED_VERSION_KEY).catch(
+    () => undefined,
+  );
+  if (!loaded || storedVersion !== SEED_VERSION) {
+    await seedMockContent(sd);
+    await saveToIndexedDb(sd).catch(() => {});
+    await idbSet(SEED_VERSION_KEY, SEED_VERSION).catch(() => {});
+  }
+}
 
 /**
  * Load the resident SD card from IndexedDB. Returns false if nothing is stored
