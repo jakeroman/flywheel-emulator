@@ -1,6 +1,6 @@
 .fw-app {
   display: grid;
-  grid-template-columns: 1fr minmax(300px, 360px);
+  grid-template-columns: 1fr minmax(380px, 520px);
   grid-template-rows: auto 1fr;
   grid-template-areas:
     "header panel"
@@ -51,9 +51,9 @@
     min-height: 100%;
   }
   .fw-app__panel {
-    height: auto;
+    height: 70vh;
   }
-  .fw-devpanel {
+  .fw-workspace {
     border-left: none;
     border-top: 1px solid var(--fw-border);
   }

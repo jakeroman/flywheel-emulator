@@ -12,7 +12,7 @@ const inkRatio = (page: Page) =>
     return dark / (canvas.width * canvas.height);
   });
 
-// The dev panel's first badge mirrors the BIOS screen (boot/menu/game/…).
+// The Dev tab's first badge mirrors the BIOS screen (boot/menu/game/…).
 const screenBadge = (page: Page) => page.locator(".fw-lua__badge").first();
 
 async function waitForSeed(page: Page) {
@@ -23,8 +23,8 @@ async function waitForSeed(page: Page) {
 
 /**
  * Phase 2 deliverable: powering on boots the BIOS into the game selector, A
- * launches the selected game (handing the display to the Lua runtime), and
- * Menu returns to the selector — all in a real browser against the prod build.
+ * launches the selected game, and Menu returns to the selector — in a real
+ * browser against the production build.
  */
 test("boots the BIOS, launches a game, and returns to the menu", async ({
   page,
@@ -35,6 +35,7 @@ test("boots the BIOS, launches a game, and returns to the menu", async ({
   await page.goto("/");
   await expect(page.locator(".fw-device")).toBeVisible();
   await waitForSeed(page);
+  await page.getByRole("tab", { name: "Dev" }).click(); // reveal status badge
 
   // Power on → boot splash → game selector.
   await page.getByRole("switch", { name: "Power switch" }).click();
@@ -54,12 +55,35 @@ test("boots the BIOS, launches a game, and returns to the menu", async ({
   expect(pageErrors).toEqual([]);
 });
 
+/**
+ * Phase 3 deliverable: open a file in the in-browser editor and Run it on the
+ * device without leaving the page.
+ */
+test("opens a script in the editor and runs it", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (e) => pageErrors.push(String(e)));
+
+  await page.goto("/");
+  await waitForSeed(page); // editor tab is the default
+
+  await page.getByTitle("/games/demo/main.lua").click();
+  await expect(page.locator(".cm-content")).toContainText("FLYWHEEL LUA DEMO");
+
+  await page.getByRole("button", { name: /Run/ }).click();
+  await page.getByRole("tab", { name: "Dev" }).click();
+  await expect(screenBadge(page)).toHaveText("game", { timeout: 10_000 });
+  await expect.poll(() => inkRatio(page), { timeout: 5_000 }).toBeGreaterThan(0);
+
+  expect(pageErrors).toEqual([]);
+});
+
 test("dev launcher runs a script directly", async ({ page }) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (e) => pageErrors.push(String(e)));
 
   await page.goto("/");
   await waitForSeed(page);
+  await page.getByRole("tab", { name: "Dev" }).click();
 
   await page.selectOption(".fw-lua__select", "/games/snake/main.lua");
   await page.getByRole("button", { name: "Launch" }).click();

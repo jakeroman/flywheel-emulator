@@ -1,0 +1,164 @@
+.fw-edit {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  gap: var(--fw-space-2);
+  padding: var(--fw-space-3);
+}
+
+.fw-edit__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--fw-space-2);
+}
+.fw-edit__name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--fw-space-1);
+  font-family: var(--fw-font-mono);
+  font-size: var(--fw-fs-xs);
+  color: var(--fw-text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fw-edit__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--fw-accent-solar);
+  flex: none;
+}
+.fw-edit__run {
+  color: var(--fw-accent-power);
+  border-color: var(--fw-accent-power);
+}
+.fw-edit__toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fw-fs-xs);
+  color: var(--fw-text-dim);
+  white-space: nowrap;
+}
+.fw-edit__toggle input {
+  accent-color: var(--fw-accent-solar);
+}
+
+.fw-edit__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: var(--fw-space-2);
+}
+
+.fw-edit__tree {
+  width: 150px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--fw-panel-inset);
+  border: 1px solid var(--fw-border);
+  border-radius: var(--fw-radius-control);
+  overflow: hidden;
+}
+.fw-edit__treebar {
+  display: flex;
+  gap: var(--fw-space-1);
+  padding: var(--fw-space-1);
+  border-bottom: 1px solid var(--fw-border);
+}
+.fw-edit__tree .fw-tree {
+  list-style: none;
+  margin: 0;
+  padding: var(--fw-space-1);
+  overflow-y: auto;
+  font-family: var(--fw-font-mono);
+  font-size: var(--fw-fs-xs);
+}
+.fw-edit__tree .fw-tree__row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-block: 1px;
+}
+.fw-edit__tree .fw-tree__row.is-open {
+  background: rgba(243, 165, 31, 0.12);
+  border-radius: 3px;
+}
+.fw-tree__file {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  padding: 1px 2px;
+  border: none;
+  background: none;
+  color: var(--fw-text);
+  font: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fw-tree__file:hover {
+  color: var(--fw-accent-solar);
+}
+.fw-tree__del {
+  border: none;
+  background: none;
+  color: var(--fw-text-faint);
+  cursor: pointer;
+  padding: 0 2px;
+  opacity: 0;
+}
+.fw-tree__row:hover .fw-tree__del {
+  opacity: 1;
+}
+.fw-tree__del:hover {
+  color: #e08a7a;
+}
+
+.fw-edit__main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+.fw-edit__empty {
+  margin: auto;
+  max-width: 240px;
+  text-align: center;
+  font-size: var(--fw-fs-sm);
+  color: var(--fw-text-faint);
+}
+.fw-edit__empty code {
+  font-family: var(--fw-font-mono);
+  color: var(--fw-text-dim);
+}
+
+.fw-edit__console {
+  flex: none;
+  height: 84px;
+  overflow-y: auto;
+  padding: var(--fw-space-2);
+  font-family: var(--fw-font-mono);
+  font-size: var(--fw-fs-xs);
+  line-height: 1.5;
+  color: var(--fw-text-dim);
+  background: var(--fw-panel-inset);
+  border: 1px solid var(--fw-border);
+  border-radius: var(--fw-radius-control);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.fw-edit__chint {
+  color: var(--fw-text-faint);
+  font-style: italic;
+}
+.fw-edit__err {
+  color: #e08a7a;
+  margin-bottom: var(--fw-space-1);
+}

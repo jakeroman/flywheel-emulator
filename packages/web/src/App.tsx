@@ -6,7 +6,7 @@ import { useBios } from "./bios/useBios.js";
 import { useSdPersistence } from "./storage/useSdPersistence.js";
 import { WebAudioDevice } from "./audio/web-audio-device.js";
 import { DeviceShell } from "./components/DeviceShell.js";
-import { DevPanel } from "./components/DevPanel.js";
+import { Workspace } from "./components/Workspace.js";
 import { useEmulatorClock } from "./hooks/useEmulatorClock.js";
 import { useKeyboardInput } from "./input/keyboard.js";
 import { drawIdleScreen } from "./boot/idle-screen.js";
@@ -60,7 +60,7 @@ export function App() {
           </main>
 
           <aside className="fw-app__panel">
-            <DevPanel />
+            <Workspace />
           </aside>
         </div>
       </BiosProvider>

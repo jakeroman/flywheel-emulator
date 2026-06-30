@@ -92,8 +92,10 @@ On-screen buttons can also be clicked/tapped.
   `/games`), single-game auto-run countdown, settings (Wi-Fi slots + battery),
   charge-on-boot comparison, and light-sleep when idle. Press **Menu** in a game
   to return to the selector.
-- **Phase 3 — In-emulator dev environment.** _(next)_ Lua editor + hot-reload,
-  SD file editor, live power/state inspection.
+- **Phase 3 — In-emulator dev environment.** ✅ In-browser Lua editor
+  (CodeMirror) with Run / hot-reload-on-save, an SD file editor (create / edit /
+  delete + import/export), a run-output console, and a live device/power
+  inspector — write Lua and see it run without leaving the page.
 - **Phase 4 — Native C toolchain (CLI).** Compile dynamic C modules to `.fwmod`.
 - **Phase 5 — Dynamic C module execution.** Evaluate QEMU/Wokwi ESP32 cores
   before hand-rolling an interpreter; build a faithfulness validation harness.
