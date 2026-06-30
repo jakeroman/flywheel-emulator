@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { decodeXtensa } from "./xtensa-decode.js";
+import { REAL_DISASM } from "./real-disasm.fixture.js";
 
 const u8 = (...b: number[]) => new Uint8Array(b);
 
@@ -89,12 +90,14 @@ describe("decodeXtensa — immediate semantics", () => {
     expect(i.target).toBeLessThan(0x20); // always backward
   });
 
-  it("L32R literal base is pc&~3, not (pc+3)&~3, at an unaligned PC", () => {
-    // imm16=0xfffe (−2 words); at pc=0x42 → base 0x40, target 0x40 - 8 = 0x38.
-    // The old (pc+3)&~3 formula would wrongly give 0x44 - 8 = 0x3c.
+  it("L32R literal base is (pc+3)&~3 at an unaligned PC (real gcc + QEMU)", () => {
+    // imm16=0xfffe (−2 words); at pc=0x42 the base is (0x42+3)&~3 = 0x44, so the
+    // target is 0x44 - 8 = 0x3c. (A real gcc -Os module has `l32r a2,&MODULE` at
+    // pc 0x...21 whose only correct resolution uses (pc+3)&~3; PC&~3 lands a word
+    // low and dispatches into string data — see exec/differential.test.ts.)
     const i = decodeXtensa(u8(0x21, 0xfe, 0xff), 0, 0x42);
     expect(i.mnemonic).toBe("l32r");
-    expect(i.target).toBe(0x38);
+    expect(i.target).toBe(0x3c);
   });
 });
 
@@ -103,6 +106,127 @@ describe("decodeXtensa — instruction length rule", () => {
     for (let op0 = 0; op0 <= 0xf; op0++) {
       const i = decodeXtensa(u8(op0, 0x00, 0x00));
       expect(i.length).toBe(op0 >= 0x8 && op0 <= 0xd ? 2 : 3);
+    }
+  });
+});
+
+describe("decodeXtensa — new instruction families (oracle-pinned operands)", () => {
+  // Bytes from the toolchain assembler (xtensa-esp32s3-elf-as); see
+  // real-disasm.fixture.ts for the broader corpus.
+  it("SLLI a3,a4,1 → shift 1, dest=r src=s (f0 34 11)", () => {
+    const i = decodeXtensa(u8(0xf0, 0x34, 0x11));
+    expect([i.mnemonic, i.r, i.s, i.imm]).toEqual(["slli", 3, 4, 1]);
+  });
+  it("SRLI a3,a4,15 → 4-bit amount in s, src=t (40 3f 41)", () => {
+    const i = decodeXtensa(u8(0x40, 0x3f, 0x41));
+    expect([i.mnemonic, i.r, i.t, i.imm]).toEqual(["srli", 3, 4, 15]);
+  });
+  it("SRAI a3,a4,31 → 5-bit amount split op2/s (40 3f 31)", () => {
+    const i = decodeXtensa(u8(0x40, 0x3f, 0x31));
+    expect([i.mnemonic, i.r, i.t, i.imm]).toEqual(["srai", 3, 4, 31]);
+  });
+  it("EXTUI a3,a4,16,16 → shift 16, width 16 (40 30 f5)", () => {
+    const i = decodeXtensa(u8(0x40, 0x30, 0xf5));
+    expect([i.mnemonic, i.r, i.t, i.imm, i.imm2]).toEqual([
+      "extui",
+      3,
+      4,
+      16,
+      16,
+    ]);
+  });
+  it("SEXT a3,a4,7 → sign-bit 7, dest=r src=s (00 34 23)", () => {
+    const i = decodeXtensa(u8(0x00, 0x34, 0x23));
+    expect([i.mnemonic, i.r, i.s, i.imm]).toEqual(["sext", 3, 4, 7]);
+  });
+  it("MULL/MULSH/MULUH share op1=2, distinguished by op2", () => {
+    expect(decodeXtensa(u8(0x30, 0x22, 0x82)).mnemonic).toBe("mull");
+    expect(decodeXtensa(u8(0x30, 0x32, 0xb2)).mnemonic).toBe("mulsh");
+    expect(decodeXtensa(u8(0x30, 0x22, 0xa2)).mnemonic).toBe("muluh");
+  });
+  it("BEQI a3,5 → B4CONST[5]=5 (26 53 26)", () => {
+    const i = decodeXtensa(u8(0x26, 0x53, 0x26), 0, 0x3e);
+    expect([i.mnemonic, i.s, i.imm, i.target]).toEqual(["beqi", 3, 5, 0x68]);
+  });
+  it("BGEUI a3,0x8000 → B4CONSTU[0]=32768 (f6 03 17)", () => {
+    const i = decodeXtensa(u8(0xf6, 0x03, 0x17), 0, 0x4d);
+    expect([i.mnemonic, i.s, i.imm]).toEqual(["bgeui", 3, 32768]);
+  });
+  it("BEQZ/BLTZ/BGEZ select on (t>>2) with a signed 12-bit offset", () => {
+    expect(decodeXtensa(u8(0x16, 0xc3, 0xff), 0, 0x33)).toMatchObject({
+      mnemonic: "beqz",
+      target: 0x33,
+    });
+    expect(decodeXtensa(u8(0x96, 0x73, 0xff), 0, 0x38)).toMatchObject({
+      mnemonic: "bltz",
+      target: 0x33,
+    });
+  });
+  it("BNE / BGEU reg-reg branch select on r (op0=7)", () => {
+    const bne = decodeXtensa(u8(0x47, 0x93, 0x11), 0, 0x53);
+    expect([bne.mnemonic, bne.s, bne.t, bne.target]).toEqual([
+      "bne",
+      3,
+      4,
+      0x68,
+    ]);
+  });
+  it("BBSI a3,31 → bit 31 = (r&1)<<4 | t (f7 f3 ff)", () => {
+    const i = decodeXtensa(u8(0xf7, 0xf3, 0xff), 0, 0x65);
+    expect([i.mnemonic, i.s, i.imm, i.target]).toEqual(["bbsi", 3, 31, 0x68]);
+  });
+  it("MOV.N a2,a8 (a2=a8) → dest=t=2, src=s=8 (2d 08)", () => {
+    // RRRN MOV.N is AR[t] = AR[s]; the destination is the t-field, not s.
+    const i = decodeXtensa(u8(0x2d, 0x08));
+    expect([i.mnemonic, i.t, i.s]).toEqual(["mov.n", 2, 8]);
+  });
+  it("JX a7 = a0 07 00 (t=0xa selects JX, operand a[s])", () => {
+    // Real gcc tail-calls with JX (t=0xa), distinct from RET (t=8)/CALLX0 (0xc).
+    const i = decodeXtensa(u8(0xa0, 0x07, 0x00));
+    expect([i.mnemonic, i.s]).toEqual(["jx", 7]);
+    expect(decodeXtensa(u8(0x80, 0x00, 0x00)).mnemonic).toBe("ret");
+    expect(decodeXtensa(u8(0xc0, 0x09, 0x00))).toMatchObject({
+      mnemonic: "callx0",
+      s: 9,
+    });
+  });
+  it("divide/remainder family (op1=2): quou/quos/remu/rems by op2", () => {
+    // quou a2,a3,a4 = c2 23 40 (value); memory LE [40 23 c2].
+    expect(decodeXtensa(u8(0x40, 0x23, 0xc2))).toMatchObject({
+      mnemonic: "quou",
+      r: 2,
+      s: 3,
+      t: 4,
+    });
+    expect(decodeXtensa(u8(0x40, 0x23, 0xd2)).mnemonic).toBe("quos");
+    expect(decodeXtensa(u8(0x40, 0x23, 0xe2)).mnemonic).toBe("remu");
+    expect(decodeXtensa(u8(0x40, 0x23, 0xf2)).mnemonic).toBe("rems");
+  });
+});
+
+describe("decodeXtensa — real toolchain disassembly conformance", () => {
+  it("reproduces objdump's mnemonic for every -Os / probe instruction", () => {
+    const misclassified = REAL_DISASM.filter(
+      (row) => decodeXtensa(Uint8Array.from(row.bytes)).mnemonic !== row.mnemonic,
+    ).map((row) => ({
+      asm: row.asm,
+      got: decodeXtensa(Uint8Array.from(row.bytes)).mnemonic,
+    }));
+    expect(misclassified).toEqual([]);
+  });
+
+  it("never returns ?ill for real toolchain output", () => {
+    const illegal = REAL_DISASM.filter(
+      (row) => decodeXtensa(Uint8Array.from(row.bytes)).mnemonic === "?ill",
+    );
+    expect(illegal).toEqual([]);
+  });
+
+  it("decodes the expected length for every row", () => {
+    for (const row of REAL_DISASM) {
+      expect(decodeXtensa(Uint8Array.from(row.bytes)).length).toBe(
+        row.bytes.length,
+      );
     }
   });
 });

@@ -2,10 +2,19 @@
  * dynregion.ld - link a Flywheel native module as a flat image whose code
  * begins at the fixed dynamic-region base.
  *
- * fw_main is forced to the very front so its entry offset within the flat
- * binary is 0. Compile units with -ffunction-sections so fw_main lands in its
- * own function section that this script can place first. The CLI then runs
- * `objcopy -O binary` to strip everything down to the loadable bytes.
+ * fw_main is forced to the front of the CODE so its entry offset is small and
+ * stable. Compile units with -ffunction-sections so fw_main lands in its own
+ * function section that this script can place first. The CLI then runs
+ * `objcopy -O binary` to strip everything down to the loadable bytes, and reads
+ * fw_main's real offset back from nm (it is NOT assumed to be 0 — see below).
+ *
+ * Xtensa L32R literal pools come first: an L32R can only reference a literal at
+ * a LOWER address (its 16-bit word offset is always negative), so every
+ * function's literals must precede the code that loads them. Lumping all
+ * .literal sections at the very front guarantees this for the whole image; the
+ * cost is that fw_main's entry offset is then the literal-pool size, not 0 (the
+ * runtime reads entry_offset from the header, so that is fine). PE/COFF host
+ * builds have no .literal sections, so there fw_main stays at offset 0.
  *
  * The base address is supplied by the CLI via `--defsym fw_dyn_base=ADDR`
  * (default below is a plausible ESP32-S3 internal-SRAM address; host/dev builds
@@ -23,6 +32,8 @@ SECTIONS {
      * (.text$fw_main, .rdata) — match both so one script serves the Xtensa
      * (ELF) and host MinGW (PE/COFF) toolchains. */
     .text : {
+        /* L32R literals first (see header) — backward-only reach. */
+        *(.literal .literal.*)
         KEEP(*(.text.fw_main))
         KEEP(*(.text$fw_main))
         *(.text .text.* .text$*)

@@ -50,6 +50,7 @@ export class XtensaCpu {
   }
   load32 = (addr: number): number => this.view.getInt32(this.at(addr, 4), true);
   load16u = (addr: number): number => this.view.getUint16(this.at(addr, 2), true);
+  load16s = (addr: number): number => this.view.getInt16(this.at(addr, 2), true);
   load8u = (addr: number): number => this.view.getUint8(this.at(addr, 1));
   store32 = (addr: number, v: number): void =>
     this.view.setInt32(this.at(addr, 4), v | 0, true);
@@ -61,6 +62,11 @@ export class XtensaCpu {
   private inArena(addr: number): boolean {
     const i = (addr >>> 0) - this.base;
     return i >= 0 && i < this.arena.length;
+  }
+
+  /** Take a branch: set PC to the (unsigned-normalized) target. */
+  private jump(target: number): void {
+    this.pc = target >>> 0;
   }
 
   /**
@@ -107,6 +113,101 @@ export class XtensaCpu {
       case "abs":
         ar[i.r] = Math.abs(ar[i.t]) | 0;
         break;
+      // ---- shifts (immediate amount in i.imm; variable via SAR) ----
+      case "slli":
+        ar[i.r] = ar[i.s] << i.imm;
+        break;
+      case "srli":
+        ar[i.r] = ar[i.t] >>> i.imm;
+        break;
+      case "srai":
+        ar[i.r] = ar[i.t] >> i.imm;
+        break;
+      case "ssl":
+        // Set SAR for a left shift: SLL shifts by (32 - SAR), so SAR = 32 - n.
+        this.sar = (32 - (ar[i.s] & 31)) & 0x3f;
+        break;
+      case "ssr":
+        this.sar = ar[i.s] & 31;
+        break;
+      case "sll":
+        ar[i.r] = ar[i.s] << ((32 - this.sar) & 31);
+        break;
+      case "srl":
+        // SAR can be 32 (set by SSL for a 0-count left shift); a JS >>> masks
+        // the count to 5 bits, so guard the right-shift-by-32 case explicitly.
+        ar[i.r] = this.sar > 31 ? 0 : ar[i.t] >>> this.sar;
+        break;
+      case "sra":
+        ar[i.r] = this.sar > 31 ? ar[i.t] >> 31 : ar[i.t] >> this.sar;
+        break;
+      // ---- bitfield ----
+      case "extui":
+        ar[i.r] = (ar[i.t] >>> i.imm) & ((1 << i.imm2) - 1);
+        break;
+      case "sext": {
+        const shift = 31 - i.imm; // sign bit position is i.imm (= field t+7)
+        ar[i.r] = (ar[i.s] << shift) >> shift;
+        break;
+      }
+      // ---- 32-bit multiply (imul for the low word; BigInt for the high) ----
+      case "mull":
+        ar[i.r] = Math.imul(ar[i.s], ar[i.t]);
+        break;
+      case "muluh":
+        ar[i.r] = Number(
+          BigInt.asIntN(32, (BigInt(ar[i.s] >>> 0) * BigInt(ar[i.t] >>> 0)) >> 32n),
+        );
+        break;
+      case "mulsh":
+        ar[i.r] = Number(
+          BigInt.asIntN(32, (BigInt(ar[i.s]) * BigInt(ar[i.t])) >> 32n),
+        );
+        break;
+      // ---- integer divide / remainder (divisor in t). Hardware raises on a
+      //      zero divisor; we yield 0 rather than NaN/Infinity to stay defined. ----
+      case "quos":
+        ar[i.r] = ar[i.t] === 0 ? 0 : (ar[i.s] / ar[i.t]) | 0; // truncating signed
+        break;
+      case "quou":
+        ar[i.r] =
+          (ar[i.t] >>> 0) === 0
+            ? 0
+            : Math.trunc((ar[i.s] >>> 0) / (ar[i.t] >>> 0)) | 0;
+        break;
+      case "rems":
+        ar[i.r] = ar[i.t] === 0 ? 0 : (ar[i.s] % ar[i.t]) | 0; // signed remainder
+        break;
+      case "remu":
+        ar[i.r] =
+          (ar[i.t] >>> 0) === 0 ? 0 : ((ar[i.s] >>> 0) % (ar[i.t] >>> 0)) | 0;
+        break;
+      // ---- min / max ----
+      case "min":
+        ar[i.r] = ar[i.s] < ar[i.t] ? ar[i.s] : ar[i.t];
+        break;
+      case "max":
+        ar[i.r] = ar[i.s] > ar[i.t] ? ar[i.s] : ar[i.t];
+        break;
+      case "minu":
+        ar[i.r] = (ar[i.s] >>> 0) < (ar[i.t] >>> 0) ? ar[i.s] : ar[i.t];
+        break;
+      case "maxu":
+        ar[i.r] = (ar[i.s] >>> 0) > (ar[i.t] >>> 0) ? ar[i.s] : ar[i.t];
+        break;
+      // ---- conditional moves (dest=r from s, gated on t) ----
+      case "moveqz":
+        if (ar[i.t] === 0) ar[i.r] = ar[i.s];
+        break;
+      case "movnez":
+        if (ar[i.t] !== 0) ar[i.r] = ar[i.s];
+        break;
+      case "movltz":
+        if (ar[i.t] < 0) ar[i.r] = ar[i.s];
+        break;
+      case "movgez":
+        if (ar[i.t] >= 0) ar[i.r] = ar[i.s];
+        break;
       case "add.n":
         ar[i.r] = ar[i.s] + ar[i.t];
         break;
@@ -125,7 +226,7 @@ export class XtensaCpu {
         ar[i.s] = i.imm;
         break;
       case "mov.n":
-        ar[i.s] = ar[i.t];
+        ar[i.t] = ar[i.s]; // RRRN MOV.N: AR[t] = AR[s] (dest=t, src=s)
         break;
       // ---- loads / stores ----
       case "l8ui":
@@ -133,6 +234,9 @@ export class XtensaCpu {
         break;
       case "l16ui":
         ar[i.t] = this.load16u((ar[i.s] + i.imm) >>> 0);
+        break;
+      case "l16si":
+        ar[i.t] = this.load16s((ar[i.s] + i.imm) >>> 0);
         break;
       case "l32i":
       case "l32i.n":
@@ -181,6 +285,80 @@ export class XtensaCpu {
           this.pc = i.target >>> 0;
           return;
         }
+        break;
+      // ---- branches (BRI12 zero-compare; BRI8 imm/reg/bit). i.imm holds the
+      //      B4CONST(U) value for *i forms and the bit number for bbci/bbsi. ----
+      case "beqz":
+        if (ar[i.s] === 0) return this.jump(i.target);
+        break;
+      case "bnez":
+        if (ar[i.s] !== 0) return this.jump(i.target);
+        break;
+      case "bltz":
+        if (ar[i.s] < 0) return this.jump(i.target);
+        break;
+      case "bgez":
+        if (ar[i.s] >= 0) return this.jump(i.target);
+        break;
+      case "beqi":
+        if (ar[i.s] === i.imm) return this.jump(i.target);
+        break;
+      case "bnei":
+        if (ar[i.s] !== i.imm) return this.jump(i.target);
+        break;
+      case "blti":
+        if (ar[i.s] < i.imm) return this.jump(i.target);
+        break;
+      case "bgei":
+        if (ar[i.s] >= i.imm) return this.jump(i.target);
+        break;
+      case "bltui":
+        if ((ar[i.s] >>> 0) < (i.imm >>> 0)) return this.jump(i.target);
+        break;
+      case "bgeui":
+        if ((ar[i.s] >>> 0) >= (i.imm >>> 0)) return this.jump(i.target);
+        break;
+      case "beq":
+        if (ar[i.s] === ar[i.t]) return this.jump(i.target);
+        break;
+      case "bne":
+        if (ar[i.s] !== ar[i.t]) return this.jump(i.target);
+        break;
+      case "blt":
+        if (ar[i.s] < ar[i.t]) return this.jump(i.target);
+        break;
+      case "bge":
+        if (ar[i.s] >= ar[i.t]) return this.jump(i.target);
+        break;
+      case "bltu":
+        if ((ar[i.s] >>> 0) < (ar[i.t] >>> 0)) return this.jump(i.target);
+        break;
+      case "bgeu":
+        if ((ar[i.s] >>> 0) >= (ar[i.t] >>> 0)) return this.jump(i.target);
+        break;
+      case "bany":
+        if ((ar[i.s] & ar[i.t]) !== 0) return this.jump(i.target);
+        break;
+      case "bnone":
+        if ((ar[i.s] & ar[i.t]) === 0) return this.jump(i.target);
+        break;
+      case "ball":
+        if ((~ar[i.s] & ar[i.t]) === 0) return this.jump(i.target);
+        break;
+      case "bnall":
+        if ((~ar[i.s] & ar[i.t]) !== 0) return this.jump(i.target);
+        break;
+      case "bbc":
+        if ((ar[i.s] & (1 << (ar[i.t] & 31))) === 0) return this.jump(i.target);
+        break;
+      case "bbs":
+        if ((ar[i.s] & (1 << (ar[i.t] & 31))) !== 0) return this.jump(i.target);
+        break;
+      case "bbci":
+        if ((ar[i.s] & (1 << i.imm)) === 0) return this.jump(i.target);
+        break;
+      case "bbsi":
+        if ((ar[i.s] & (1 << i.imm)) !== 0) return this.jump(i.target);
         break;
       // ---- no-ops ----
       case "nop":

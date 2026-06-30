@@ -129,7 +129,10 @@ class Toolchain:
 
         A toolchain invoked by absolute path (e.g. an off-PATH MinGW) still
         spawns helper programs (cc1, the assembler) and loads runtime DLLs from
-        its bin dir; that dir must be discoverable or those fail to start.
+        its bin dir; that dir must be discoverable or those fail to start. We
+        also add each bin dir's sibling `lib/`: the unified xtensa-esp-elf
+        toolchain's per-chip config (`-mdynconfig=xtensa_esp32s3.so`) is a DLL in
+        lib/ whose own dependencies the loader resolves via PATH.
         """
         dirs: list[str] = []
         for tool in (self.cc, self.ld, self.objcopy, self.objdump, self.nm):
@@ -138,6 +141,9 @@ class Toolchain:
             d = os.path.dirname(tool)
             if d and d not in dirs:
                 dirs.append(d)
+            sib_lib = os.path.join(os.path.dirname(d), "lib") if d else ""
+            if sib_lib and os.path.isdir(sib_lib) and sib_lib not in dirs:
+                dirs.append(sib_lib)
         env = os.environ.copy()
         if dirs:
             env["PATH"] = os.pathsep.join((*dirs, env.get("PATH", "")))
@@ -153,10 +159,18 @@ def compile_module(
     include_dirs: tuple[str, ...] = (),
     ld_script: str | os.PathLike[str] | None = None,
     extra_cflags: tuple[str, ...] = (),
+    dynconfig: str | None = None,
     verbose: bool = False,
 ) -> FwModule:
     """Compile a single C source into a FwModule: object -> linked image at the
-    fixed base -> flat binary, with entry offset and .bss size read back."""
+    fixed base -> flat binary, with entry offset and .bss size read back.
+
+    `dynconfig` selects the unified xtensa-esp-elf toolchain's per-chip core
+    config (e.g. "xtensa_esp32s3.so"): it is resolved to a full path and exported
+    as XTENSA_GNU_CONFIG, which drives gcc, the assembler, AND ld together —
+    selecting the ESP32-S3 ISA and its little-endian byte order (the toolchain
+    defaults to big-endian without it). Chip-specific toolchains bake this in and
+    need no dynconfig."""
     src = Path(source)
     if not src.exists():
         raise ToolchainError(f"source not found: {src}")
@@ -165,6 +179,8 @@ def compile_module(
     load_addr &= 0xFFFFFFFF
 
     env = tc.subprocess_env()
+    if dynconfig:
+        env["XTENSA_GNU_CONFIG"] = _resolve_dynconfig(tc, dynconfig)
     workdir = Path(tempfile.mkdtemp(prefix="fwmod-"))
     try:
         obj = workdir / "module.o"
@@ -289,6 +305,29 @@ def _run(
     if verbose and proc.stderr.strip():
         print(proc.stderr.rstrip())
     return proc.stdout
+
+
+def _resolve_dynconfig(tc: Toolchain, dynconfig: str) -> str:
+    """Resolve a dynconfig to an absolute path: an existing path is used as-is;
+    a bare name (xtensa_esp32s3.so) is looked up in each tool's sibling lib/."""
+    if Path(dynconfig).exists():
+        return str(Path(dynconfig).resolve())
+    seen: list[str] = []
+    for tool in (tc.cc, tc.ld):
+        if not tool:
+            continue
+        bindir = os.path.dirname(tool)
+        lib = os.path.join(os.path.dirname(bindir), "lib")
+        if lib in seen:
+            continue
+        seen.append(lib)
+        cand = os.path.join(lib, dynconfig)
+        if os.path.exists(cand):
+            return cand
+    raise ToolchainError(
+        f"dynconfig {dynconfig!r} not found (looked in: {', '.join(seen) or 'no lib dirs'}). "
+        "Pass a full path or check the toolchain layout."
+    )
 
 
 def _missing_message(missing: list[str], prefix: str, bindir: str | None) -> str:

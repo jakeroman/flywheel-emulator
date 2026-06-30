@@ -80,6 +80,11 @@ def _build_parser() -> argparse.ArgumentParser:
     b.add_argument(
         "--cflag", action="append", default=[], help="extra compiler flag (repeatable)"
     )
+    b.add_argument(
+        "--dynconfig",
+        help="xtensa-esp-elf per-chip core config (e.g. xtensa_esp32s3.so); "
+        "exported as XTENSA_GNU_CONFIG to select the ESP32-S3 ISA + little-endian",
+    )
     b.add_argument("-v", "--verbose", action="store_true", help="echo toolchain commands")
     b.set_defaults(func=_cmd_build)
 
@@ -143,6 +148,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
             include_dirs=includes,
             ld_script=ld_script,
             extra_cflags=tuple(args.cflag),
+            dynconfig=args.dynconfig,
             verbose=args.verbose,
         )
 

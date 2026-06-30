@@ -130,3 +130,191 @@ describe("XtensaCpu execution", () => {
     ).toThrow(/out-of-bounds/);
   });
 });
+
+describe("XtensaCpu — extended instruction set", () => {
+  it("immediate + variable shifts (slli/srli/srai, ssl/sll, ssr/srl)", () => {
+    const cpu = run([
+      xasm.movi(2, 1),
+      xasm.slli(3, 2, 4), // a3 = 1 << 4 = 16
+      xasm.srli(4, 3, 2), // a4 = 16 >>> 2 = 4
+      xasm.movi(5, -1),
+      xasm.srai(6, 5, 1), // a6 = -1 >> 1 = -1 (arithmetic)
+      xasm.srli(7, 5, 15), // a7 = 0xffffffff >>> 15 = 131071 (logical, not sign-extended)
+      xasm.movi(8, 3),
+      xasm.ssl(8), // SAR for a left shift by 3
+      xasm.sll(9, 3), // a9 = 16 << 3 = 128
+      xasm.ssr(8), // SAR for a right shift by 3
+      xasm.srl(10, 9), // a10 = 128 >>> 3 = 16
+      xasm.ret(),
+    ]);
+    expect([cpu.ar[3], cpu.ar[4], cpu.ar[6], cpu.ar[7]]).toEqual([
+      16, 4, -1, 131071,
+    ]);
+    expect([cpu.ar[9], cpu.ar[10]]).toEqual([128, 16]);
+  });
+
+  it("extui extracts a bit field; sext sign-extends from a bit", () => {
+    const cpu = run([
+      xasm.movi(2, -1), // 0xffffffff
+      xasm.extui(3, 2, 4, 8), // (0xffffffff >>> 4) & 0xff = 0xff = 255
+      xasm.movi(4, 0x80), // bit 7 set
+      xasm.sext(5, 4, 7), // sign-extend from bit 7 → 0xffffff80 = -128
+      xasm.ret(),
+    ]);
+    expect([cpu.ar[3], cpu.ar[5]]).toEqual([255, -128]);
+  });
+
+  it("mull/muluh/mulsh give the correct low and high 64-bit words", () => {
+    const cpu = run([
+      xasm.movi(2, 1),
+      xasm.slli(2, 2, 16), // a2 = 65536
+      xasm.movN(3, 2), // a3 = 65536
+      xasm.mull(4, 2, 3), // low 32 of 65536*65536 = 0
+      xasm.muluh(5, 2, 3), // high 32 (unsigned) = 1
+      xasm.neg(6, 2), // a6 = -65536
+      xasm.mulsh(7, 6, 2), // high 32 (signed) of -(2^32) = -1
+      xasm.muluh(8, 6, 2), // high 32 (unsigned) of 0xffff0000*0x10000
+      xasm.ret(),
+    ]);
+    expect([cpu.ar[4], cpu.ar[5], cpu.ar[7]]).toEqual([0, 1, -1]);
+    expect(cpu.ar[8]).toBe(0xffff); // (0xffff0000 * 0x10000) >> 32
+  });
+
+  it("min/max/minu/maxu treat sign correctly", () => {
+    const cpu = run([
+      xasm.movi(2, 5),
+      xasm.movi(3, -3),
+      xasm.min(4, 2, 3), // signed → -3
+      xasm.max(5, 2, 3), // signed → 5
+      xasm.minu(6, 2, 3), // unsigned → 5 (−3 is large unsigned)
+      xasm.maxu(7, 2, 3), // unsigned → −3
+      xasm.ret(),
+    ]);
+    expect([cpu.ar[4], cpu.ar[5], cpu.ar[6], cpu.ar[7]]).toEqual([-3, 5, 5, -3]);
+  });
+
+  it("conditional moves fire only when the gate register matches", () => {
+    const cpu = run([
+      xasm.movi(2, 0), // gate = 0
+      xasm.movi(3, 99), // source
+      xasm.movi(4, 1),
+      xasm.moveqz(4, 3, 2), // a2==0 → a4 = 99
+      xasm.movi(5, 7),
+      xasm.movnez(5, 3, 2), // a2==0 → NOT moved → a5 stays 7
+      xasm.ret(),
+    ]);
+    expect([cpu.ar[4], cpu.ar[5]]).toEqual([99, 7]);
+  });
+
+  it("l16si sign-extends a 16-bit load; l16ui zero-extends", () => {
+    const cpu = run(
+      [
+        xasm.movi(2, -1),
+        xasm.s16i(2, 8, 0), // store 0xffff
+        xasm.l16si(3, 8, 0), // → -1
+        xasm.l16ui(4, 8, 0), // → 65535
+        xasm.ret(),
+      ],
+      (c) => {
+        c.ar[8] = BASE + 0x400;
+      },
+    );
+    expect([cpu.ar[3], cpu.ar[4]]).toEqual([-1, 65535]);
+  });
+
+  it("runs a counted loop with a backward register branch (bnez)", () => {
+    // a2=5 counter, a3=0 sum; loop body then `bnez a2, loop` (backward, signed).
+    const head = xasm.movi(2, 5).length + xasm.movi(3, 0).length;
+    const loopAt = BASE + head;
+    const bnezAt = loopAt + 2 /*add.n*/ + 2; /*addi.n*/
+    const cpu = run([
+      xasm.movi(2, 5),
+      xasm.movi(3, 0),
+      xasm.addN(3, 3, 2), // loop: sum += counter
+      xasm.addiN(2, 2, -1), // counter--
+      xasm.bnez(2, loopAt, bnezAt), // backward branch while counter != 0
+      xasm.ret(),
+    ]);
+    expect(cpu.ar[3]).toBe(15);
+    expect(cpu.ar[2]).toBe(0);
+  });
+
+  it("immediate compare branch (beqi) taken on equality", () => {
+    // Layout (all 3-byte): movi@+0, beqi@+3, movi(else)@+6, j@+9, movi(then)@+12,
+    // ret@+15.  if (a2 == 5) a3 = 1 else a3 = 2
+    const beqiAt = BASE + 3;
+    const jAt = BASE + 9;
+    const thenAt = BASE + 12;
+    const retAt = BASE + 15;
+    const cpu = run([
+      xasm.movi(2, 5),
+      xasm.beqi(2, 5, thenAt, beqiAt), // == 5 → jump to "then"
+      xasm.movi(3, 2), // else: a3 = 2
+      xasm.j(retAt, jAt), // skip "then"
+      xasm.movi(3, 1), // then: a3 = 1
+      xasm.ret(),
+    ]);
+    expect(cpu.ar[3]).toBe(1);
+  });
+
+  it("integer divide/remainder: signed trunc, unsigned, div-by-zero→0", () => {
+    const cpu = run([
+      xasm.movi(2, 17),
+      xasm.movi(3, 5),
+      xasm.quos(4, 2, 3), // 17 / 5 = 3
+      xasm.rems(5, 2, 3), // 17 % 5 = 2
+      xasm.movi(6, -17),
+      xasm.quos(7, 6, 3), // -17 / 5 = -3 (truncate toward zero)
+      xasm.rems(8, 6, 3), // -17 % 5 = -2
+      xasm.movi(9, -1), // 0xffffffff
+      xasm.movi(10, 2),
+      xasm.quou(11, 9, 10), // 0xffffffff / 2 = 0x7fffffff
+      xasm.remu(12, 9, 10), // 0xffffffff % 2 = 1
+      xasm.movi(13, 0),
+      xasm.quos(14, 2, 13), // divide by zero → 0 (defined, not NaN)
+      xasm.ret(),
+    ]);
+    expect([cpu.ar[4], cpu.ar[5], cpu.ar[7], cpu.ar[8]]).toEqual([3, 2, -3, -2]);
+    expect([cpu.ar[11], cpu.ar[12], cpu.ar[14]]).toEqual([0x7fffffff, 1, 0]);
+  });
+
+  it("jx jumps to a[s] (real gcc tail-call form)", () => {
+    // jx a5 (a5 = address of `movi a2,99`) skips the intervening movi a2,1.
+    const cpu = run(
+      [
+        xasm.jx(5), // BASE+0: jump to a5
+        xasm.movi(2, 1), // BASE+3: skipped
+        xasm.movi(2, 99), // BASE+6: jx lands here
+        xasm.ret(),
+      ],
+      (c) => {
+        c.ar[5] = BASE + 6;
+      },
+    );
+    expect(cpu.ar[2]).toBe(99);
+  });
+
+  it("mov.n copies src→dest, not the reverse (asymmetric so inversion shows)", () => {
+    const cpu = run([
+      xasm.movi(8, 42),
+      xasm.movi(2, 7),
+      xasm.movN(2, 8), // a2 = a8 → a2 becomes 42, a8 unchanged
+      xasm.ret(),
+    ]);
+    expect(cpu.ar[2]).toBe(42);
+    expect(cpu.ar[8]).toBe(42); // source preserved (would be 7 if inverted)
+  });
+
+  it("srl/sra honor SAR=32 (shift-by-32) without JS shift-count wrap", () => {
+    const srl = run([xasm.srl(3, 4), xasm.ret()], (c) => {
+      c.ar[4] = 0x7fffffff;
+      c.sar = 32; // as SSL would set for a 0-count left shift
+    });
+    expect(srl.ar[3]).toBe(0); // logical >> 32 → 0
+    const sra = run([xasm.sra(3, 4), xasm.ret()], (c) => {
+      c.ar[4] = -1;
+      c.sar = 32;
+    });
+    expect(sra.ar[3]).toBe(-1); // arithmetic >> 32 of a negative → all ones
+  });
+});
