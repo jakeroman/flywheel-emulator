@@ -1,11 +1,25 @@
 .fw-app {
+  --fw-panel-w: 460px;
   display: grid;
-  grid-template-columns: 1fr minmax(380px, 520px);
+  grid-template-columns: minmax(0, 1fr) 7px var(--fw-panel-w);
   grid-template-rows: auto 1fr;
   grid-template-areas:
-    "header panel"
-    "stage  panel";
+    "header resizer panel"
+    "stage  resizer panel";
   height: 100%;
+}
+
+/* Draggable divider between the device stage and the workspace panel. */
+.fw-resizer {
+  grid-area: resizer;
+  cursor: col-resize;
+  background: var(--fw-border);
+  touch-action: none;
+}
+.fw-resizer:hover,
+.fw-resizer:focus-visible {
+  background: var(--fw-accent-solar);
+  outline: none;
 }
 
 .fw-app__header {
@@ -52,6 +66,9 @@
   }
   .fw-app__panel {
     height: 70vh;
+  }
+  .fw-resizer {
+    display: none;
   }
   .fw-workspace {
     border-left: none;

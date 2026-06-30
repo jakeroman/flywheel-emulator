@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { EmulatedFlywheelDevice } from "@flywheel/emulator-core";
 import { DeviceProvider } from "./device/device-context.js";
 import { BiosProvider } from "./bios/bios-context.js";
@@ -8,6 +8,7 @@ import { WebAudioDevice } from "./audio/web-audio-device.js";
 import { DeviceShell } from "./components/DeviceShell.js";
 import { Workspace } from "./components/Workspace.js";
 import { useEmulatorClock } from "./hooks/useEmulatorClock.js";
+import { useResizableWidth } from "./hooks/useResizableWidth.js";
 import { useKeyboardInput } from "./input/keyboard.js";
 import { drawIdleScreen } from "./boot/idle-screen.js";
 import "./App.css";
@@ -44,10 +45,15 @@ export function App() {
   useEmulatorClock(device, biosController.bios);
   useKeyboardInput(device);
 
+  const { width: panelWidth, resizerProps } = useResizableWidth();
+
   return (
     <DeviceProvider device={device}>
       <BiosProvider controller={biosController}>
-        <div className="fw-app">
+        <div
+          className="fw-app"
+          style={{ ["--fw-panel-w"]: `${panelWidth}px` } as CSSProperties}
+        >
           <header className="fw-app__header">
             <h1 className="fw-app__title">Flywheel Emulator</h1>
             <p className="fw-app__subtitle">
@@ -58,6 +64,15 @@ export function App() {
           <main className="fw-app__stage">
             <DeviceShell />
           </main>
+
+          <div
+            className="fw-resizer"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize workspace panel"
+            tabIndex={0}
+            {...resizerProps}
+          />
 
           <aside className="fw-app__panel">
             <Workspace />
