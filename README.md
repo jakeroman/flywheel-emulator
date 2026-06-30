@@ -96,6 +96,14 @@ On-screen buttons can also be clicked/tapped.
   (CodeMirror) with Run / hot-reload-on-save, an SD file editor (create / edit /
   delete + import/export), a run-output console, and a live device/power
   inspector — write Lua and see it run without leaving the page.
-- **Phase 4 — Native C toolchain (CLI).** Compile dynamic C modules to `.fwmod`.
+- **Phase 4 — Native C toolchain (CLI).** ✅ The [`fwmod`](tools/fwmod) CLI
+  (Python) compiles freestanding C against the module ABI
+  ([`fw_api.h`](tools/fwmod/include/fw_api.h)) and packs it into a validated
+  `.fwmod` container ([format](docs/fwmod-format.md) · [ABI](docs/module-abi.md)).
+  The `.fwmod` codec is shared by the CLI (writer) and the emulator (reader) via
+  a golden cross-language fixture. Games gain a [`game.json`](docs/module-abi.md)
+  manifest + resolver; the BIOS resolves, loads, and integrity-checks declared
+  native modules (execution lands in Phase 5). The toolchain is arch-pluggable:
+  a host gcc for dev today, `xtensa-esp32s3-elf-gcc` for hardware.
 - **Phase 5 — Dynamic C module execution.** Evaluate QEMU/Wokwi ESP32 cores
   before hand-rolling an interpreter; build a faithfulness validation harness.

@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+*.fwmod
+# but keep the committed fixtures
+!fixtures/*.fwmod

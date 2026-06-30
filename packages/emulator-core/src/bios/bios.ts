@@ -10,6 +10,8 @@ import {
 } from "../lua/lua-runtime.js";
 import { POWER_CONSTANTS } from "../device/power-model.js";
 import { scanGames, type GameEntry } from "./game-scan.js";
+import { resolveGame, type ResolvedModule } from "./manifest.js";
+import { loadFwmod } from "../fwmod/index.js";
 import {
   loadSettings,
   saveSettings,
@@ -26,11 +28,28 @@ export interface ChargeReport {
   estPlaytimeMin: number;
 }
 
+/** Per-module load/integrity status for the currently launched game. */
+export interface BiosModuleStatus {
+  name: string;
+  path: string;
+  /** Target arch label, e.g. "xtensa-lx7" / "host-x86" ("?" if undecodable). */
+  arch: string;
+  codeSize: number;
+  /** Decoded, valid, and ABI-compatible. */
+  loadable: boolean;
+  /** The host can execute it now (always false until Phase 5's backend). */
+  runnable: boolean;
+  /** Why it isn't runnable/loadable, for display. */
+  reason: string | null;
+}
+
 export interface BiosSnapshot {
   screen: BiosScreen;
   games: ReadonlyArray<GameEntry>;
   selectedIndex: number;
   currentGameTitle: string | null;
+  /** Native (.fwmod) modules the current game declared (empty for most). */
+  currentGameModules: ReadonlyArray<BiosModuleStatus>;
   gameStatus: LuaStatus;
   error: string | null;
 }
@@ -65,7 +84,7 @@ export class Bios {
   private games: GameEntry[] = [];
   private selected = 0;
   private settingsSel = 0;
-  private currentGame: GameEntry | null = null;
+  private current: { title: string; modules: BiosModuleStatus[] } | null = null;
   private settings: BiosSettings;
   private error: string | null = null;
   private booted = false;
@@ -89,6 +108,9 @@ export class Bios {
           this.events.emit("error", e.message);
           this.emit();
         },
+        // The async idle→running flip happens after start()'s synchronous emit;
+        // mirror it so the dev UI's game-status badge isn't stuck on "idle".
+        onStatus: () => this.emit(),
       },
       options,
     );
@@ -108,7 +130,8 @@ export class Bios {
       screen: this.screen,
       games: this.games,
       selectedIndex: this.selected,
-      currentGameTitle: this.currentGame?.title ?? null,
+      currentGameTitle: this.current?.title ?? null,
+      currentGameModules: this.current?.modules ?? [],
       gameStatus: this.runtime.status,
       error: this.error,
     };
@@ -149,7 +172,7 @@ export class Bios {
     this.settings.lastPlayedAt = Date.now();
     saveSettings(this.device.sd, this.settings);
     this.dispose();
-    this.currentGame = null;
+    this.current = null;
     this.setScreen("boot");
     // Power-off blanks the display. (Light/deep-sleep never call shutdown, so
     // the bistable memory LCD holds its last frame while sleeping.)
@@ -165,15 +188,24 @@ export class Bios {
 
   /** Dev shortcut: launch an arbitrary script path as a game, bypassing the menu. */
   async launchScript(path: string): Promise<void> {
+    // Dev-launching from a powered-off device skips boot(), so populate the
+    // menu state here (without recording boot()'s charge baseline) — otherwise
+    // exiting the game lands on an empty "No games on SD card" selector.
+    if (!this.booted) {
+      this.settings = loadSettings(this.device.sd);
+      this.games = scanGames(this.device.sd);
+      this.selected = 0;
+    }
     // Mark booted first so powering on does not also trigger a full boot()
     // (which would re-scan and overwrite the charge baseline mid-session).
     this.booted = true;
     if (!this.device.poweredOn) this.device.powerOn();
-    await this.launch({
-      id: path,
-      path,
-      mainPath: path,
+    // A raw script path bypasses manifest resolution (no game-dir context).
+    await this.start({
       title: basename(path),
+      entryPath: path,
+      modules: [],
+      warnings: [],
     });
   }
 
@@ -303,22 +335,93 @@ export class Bios {
     else this.setScreen("menu");
   }
 
+  /** Resolve a menu entry's manifest (game.json or legacy main.lua), then start it. */
   private async launch(game: GameEntry): Promise<void> {
-    this.currentGame = game;
+    await this.start(resolveGame(this.device.sd, game.path, game.id));
+  }
+
+  /**
+   * The single launch pipeline: surface manifest warnings, inspect any declared
+   * native modules, then hand the display to the Lua runtime for the entry
+   * script. Shared by the menu launcher and the dev launchScript() shortcut.
+   */
+  private async start(resolved: {
+    title: string;
+    entryPath: string;
+    modules: ReadonlyArray<ResolvedModule>;
+    warnings: ReadonlyArray<string>;
+  }): Promise<void> {
     this.error = null;
+    for (const w of resolved.warnings) this.events.emit("log", w);
+    this.current = {
+      title: resolved.title,
+      modules: this.inspectModules(resolved.modules),
+    };
     this.device.power.setEspMode(EspMode.Active);
     this.setScreen("game");
+    // setScreen no-ops on a game→game relaunch; emit so the new title/modules
+    // still reach the UI.
+    this.emit();
     try {
-      await this.runtime.load(this.device.sd.readTextFileSync(game.mainPath));
+      await this.runtime.load(
+        this.device.sd.readTextFileSync(resolved.entryPath),
+      );
     } catch (e) {
       this.error = e instanceof Error ? e.message : String(e);
       this.emit();
     }
   }
 
+  /** Decode + integrity-check each declared native module (no execution yet). */
+  private inspectModules(
+    modules: ReadonlyArray<ResolvedModule>,
+  ): BiosModuleStatus[] {
+    return modules.map((m) => {
+      const unloadable = (reason: string): BiosModuleStatus => {
+        this.events.emit("log", `module ${m.name}: ${reason}`);
+        return {
+          name: m.name,
+          path: m.path,
+          arch: "?",
+          codeSize: 0,
+          loadable: false,
+          runnable: false,
+          reason,
+        };
+      };
+      // Read defensively: existsSync is true for a directory too, and a
+      // manifest could point a module path at one. A read failure must degrade
+      // to "unloadable", never throw out of the launch pipeline.
+      let bytes: Uint8Array;
+      try {
+        if (!this.device.sd.existsSync(m.path)) return unloadable("file not found");
+        bytes = this.device.sd.readFileSync(m.path);
+      } catch (e) {
+        return unloadable(e instanceof Error ? e.message : "unreadable");
+      }
+      const result = loadFwmod(bytes);
+      const status: BiosModuleStatus = {
+        name: m.name,
+        path: m.path,
+        arch: result.info?.archLabel ?? "?",
+        codeSize: result.info?.codeSize ?? 0,
+        loadable: result.loadable,
+        runnable: result.runnable,
+        reason: result.reason,
+      };
+      const note = status.loadable
+        ? status.runnable
+          ? "ready"
+          : status.reason ?? "loadable"
+        : `invalid: ${status.reason ?? "see problems"}`;
+      this.events.emit("log", `module ${m.name} [${status.arch}]: ${note}`);
+      return status;
+    });
+  }
+
   private exitGame(): void {
     void this.runtime.dispose();
-    this.currentGame = null;
+    this.current = null;
     this.error = null;
     this.idleMs = 0;
     this.setScreen("menu");

@@ -54,10 +54,22 @@ describe("scanGames", () => {
     const sd = new MemorySDCard();
     sd.mkdirSync("/games/untitled", true);
     sd.writeFileSync("/games/untitled/main.lua", "");
-    sd.mkdirSync("/games/empty", true); // no main.lua → skipped
+    sd.mkdirSync("/games/empty", true); // no main.lua or game.json → skipped
     const games = scanGames(sd);
     expect(games.map((g) => g.id)).toEqual(["untitled"]);
     expect(games[0].title).toBe("untitled");
+  });
+
+  it("lists a game that has only a game.json (custom entry, no main.lua)", () => {
+    const sd = new MemorySDCard();
+    sd.mkdirSync("/games/native", true);
+    sd.writeFileSync("/games/native/start.lua", "");
+    sd.writeFileSync(
+      "/games/native/game.json",
+      JSON.stringify({ entry: "start.lua" }),
+    );
+    const games = scanGames(sd);
+    expect(games.map((g) => g.id)).toEqual(["native"]);
   });
 
   it("clamps long titles and collapses control chars", () => {
@@ -134,6 +146,20 @@ describe("Bios", () => {
     expect(bios.snapshot().screen).toBe("menu");
     expect(bios.snapshot().gameStatus).toBe("idle");
     void device;
+  });
+
+  it("populates the game list when launchScript runs from a powered-off device", async () => {
+    const device = new EmulatedFlywheelDevice();
+    await seedMockContent(device.sd); // demo + snake
+    const bios = new Bios(device);
+    // Device is OFF and not booted; dev-launch a script directly.
+    await bios.launchScript("/games/snake/main.lua");
+    expect(bios.snapshot().screen).toBe("game");
+    // Returning to the menu must show the games, not "No games on SD card".
+    bios.returnToMenu();
+    const s = bios.snapshot();
+    expect(s.screen).toBe("menu");
+    expect(s.games.length).toBeGreaterThan(0);
   });
 
   it("reports charge gained since the last boot", async () => {

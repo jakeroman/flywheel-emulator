@@ -56,6 +56,24 @@ export function LuaPanel() {
         )}
       </div>
 
+      {snapshot.currentGameModules.length > 0 && (
+        <ul className="fw-lua__modules" aria-label="Native modules">
+          {snapshot.currentGameModules.map((m) => (
+            <li
+              key={m.path}
+              className={`fw-lua__module fw-lua__module--${m.loadable ? "ok" : "bad"}`}
+              title={m.reason ?? undefined}
+            >
+              <span className="fw-lua__module-name">{m.name}</span>
+              <span className="fw-lua__module-arch">{m.arch}</span>
+              <span className="fw-lua__module-state">
+                {m.loadable ? (m.runnable ? "ready" : "loaded") : "invalid"}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
       <div className="fw-lua__controls">
         <select
           className="fw-lua__select"

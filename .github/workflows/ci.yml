@@ -19,3 +19,15 @@ jobs:
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+
+  fwmod-cli:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Stdlib only — no install step. Tests cover the codec, the golden
+      # cross-language fixture, and the CLI's pack/inspect/validate paths.
+      - run: python -m unittest discover -s tests
+        working-directory: tools/fwmod

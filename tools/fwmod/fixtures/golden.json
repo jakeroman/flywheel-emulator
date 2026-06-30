@@ -1,0 +1,14 @@
+{
+  "file_size": 96,
+  "format_version": 1,
+  "abi_version": 1,
+  "arch": 1,
+  "arch_name": "xtensa-lx7",
+  "flags": 1,
+  "code_size": 64,
+  "bss_size": 256,
+  "entry_offset": 0,
+  "load_addr": 1070104576,
+  "crc32": 269405836,
+  "payload_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f"
+}

@@ -1,0 +1,3 @@
+# Binary module fixtures must never be line-ending normalized (would corrupt
+# the byte layout the conformance tests assert against).
+*.fwmod binary
