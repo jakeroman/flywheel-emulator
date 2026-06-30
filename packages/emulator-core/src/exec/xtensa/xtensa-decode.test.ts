@@ -88,6 +88,14 @@ describe("decodeXtensa — immediate semantics", () => {
     expect(i.target % 4).toBe(0); // word-aligned
     expect(i.target).toBeLessThan(0x20); // always backward
   });
+
+  it("L32R literal base is pc&~3, not (pc+3)&~3, at an unaligned PC", () => {
+    // imm16=0xfffe (−2 words); at pc=0x42 → base 0x40, target 0x40 - 8 = 0x38.
+    // The old (pc+3)&~3 formula would wrongly give 0x44 - 8 = 0x3c.
+    const i = decodeXtensa(u8(0x21, 0xfe, 0xff), 0, 0x42);
+    expect(i.mnemonic).toBe("l32r");
+    expect(i.target).toBe(0x38);
+  });
 });
 
 describe("decodeXtensa — instruction length rule", () => {

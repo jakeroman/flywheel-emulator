@@ -97,6 +97,15 @@ export class XtensaModuleRuntime implements ModuleRuntime {
       const arena = new Uint8Array(apiOff + STRUCT_BYTES + ARENA_HEADROOM);
       arena.set(module.payload, 0);
 
+      // The arena must sit entirely below the host sentinel region (and not wrap
+      // past 2^32), or a real arena address could be mistaken for a host call.
+      const arenaEnd = (base + arena.length) >>> 0;
+      if (arenaEnd <= base || arenaEnd > SENTINEL_BASE) {
+        throw new Error(
+          `xtensa: arena [0x${base.toString(16)}..0x${arenaEnd.toString(16)}) overlaps the host sentinel region at 0x${SENTINEL_BASE.toString(16)}`,
+        );
+      }
+
       const view = new DataView(arena.buffer);
       // fw_api_t: abi_version, width, height, then one sentinel per fn-ptr slot.
       view.setUint32(apiOff, 1, true);

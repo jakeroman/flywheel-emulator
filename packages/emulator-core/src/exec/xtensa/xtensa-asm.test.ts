@@ -56,22 +56,31 @@ describe("xtensa assembler ⇄ decoder round-trip", () => {
     expect(decodeXtensa(bytes(xasm.j(0x20, pc)), 0, pc).target).toBe(0x20);
     expect(decodeXtensa(bytes(xasm.j(0x80, pc)), 0, pc).target).toBe(0x80);
     expect(decodeXtensa(bytes(xasm.call0(0x100, pc)), 0, pc).target).toBe(0x100);
+    // Narrow branches are forward-only (unsigned 6-bit). The +44 case has bit 5
+    // set, so a (wrong) sign-extend would decode it backward — assert forward.
     expect(decodeXtensa(bytes(xasm.beqzN(3, 0x4e, pc)), 0, pc)).toMatchObject({
       mnemonic: "beqz.n",
       s: 3,
       target: 0x4e,
     });
-    expect(decodeXtensa(bytes(xasm.bnezN(3, 0x30, pc)), 0, pc)).toMatchObject({
+    expect(decodeXtensa(bytes(xasm.bnezN(3, pc + 4 + 44, pc)), 0, pc)).toMatchObject({
       mnemonic: "bnez.n",
       s: 3,
-      target: 0x30,
+      target: pc + 4 + 44,
     });
-    // L32R literal is always backward + word-aligned.
-    const lit = 0x3c; // word-aligned, < pc
-    expect(decodeXtensa(bytes(xasm.l32r(2, lit, pc)), 0, pc)).toMatchObject({
+    expect(() => xasm.bnezN(3, pc - 8, pc)).toThrow(/out of range/); // backward rejected
+
+    // L32R: backward + word-aligned, base = pc & ~3 (test at an UNALIGNED pc).
+    expect(decodeXtensa(bytes(xasm.l32r(2, 0x3c, pc)), 0, pc)).toMatchObject({
       mnemonic: "l32r",
       t: 2,
-      target: lit,
+      target: 0x3c,
+    });
+    const upc = 0x42; // unaligned
+    expect(decodeXtensa(bytes(xasm.l32r(2, 0x38, upc)), 0, upc)).toMatchObject({
+      mnemonic: "l32r",
+      t: 2,
+      target: 0x38,
     });
   });
 });

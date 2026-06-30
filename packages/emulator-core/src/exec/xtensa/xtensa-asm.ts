@@ -26,6 +26,24 @@ const rri8 = (op0: number, t: number, s: number, r: number, imm8: number) =>
 const narrow = (op0: number, t: number, s: number, r: number) =>
   w16(op0 | (t << 4) | (s << 8) | (r << 12));
 
+// BEQZ.N (tBase 0x8) / BNEZ.N (tBase 0xc): the 6-bit offset is unsigned and
+// forward-only (target = pc + 4 + off, off in 0..63). Backward narrow branches
+// don't exist — use a full branch / J instead.
+function narrowBranch(
+  tBase: number,
+  s: number,
+  target: number,
+  pc: number,
+): number[] {
+  const off = target - pc - 4;
+  if (off < 0 || off > 63) {
+    throw new Error(
+      `beqz.n/bnez.n offset out of range (forward 0..63): ${off}`,
+    );
+  }
+  return narrow(0xc, tBase | ((off >> 4) & 0x3), s, off & 0xf);
+}
+
 /** Concatenate instruction byte-arrays into a program buffer. */
 export function program(...insns: number[][]): Uint8Array {
   return Uint8Array.from(insns.flat());
@@ -82,15 +100,9 @@ export const xasm = {
     return w24(0x6 | (off << 6));
   },
   l32r: (t: number, litTarget: number, pc: number) => {
-    const off = ((litTarget - ((pc + 3) & ~3)) >> 2) & 0xffff;
+    const off = ((litTarget - (pc & ~3)) >> 2) & 0xffff;
     return w24(0x1 | (t << 4) | (off << 8));
   },
-  beqzN: (s: number, target: number, pc: number) => {
-    const off = (target - pc - 4) & 0x3f;
-    return narrow(0xc, 0x8 | ((off >> 4) & 0x3), s, off & 0xf);
-  },
-  bnezN: (s: number, target: number, pc: number) => {
-    const off = (target - pc - 4) & 0x3f;
-    return narrow(0xc, 0xc | ((off >> 4) & 0x3), s, off & 0xf);
-  },
+  beqzN: (s: number, target: number, pc: number) => narrowBranch(0x8, s, target, pc),
+  bnezN: (s: number, target: number, pc: number) => narrowBranch(0xc, s, target, pc),
 };

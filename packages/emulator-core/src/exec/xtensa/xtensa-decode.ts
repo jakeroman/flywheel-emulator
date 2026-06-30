@@ -113,9 +113,11 @@ export function decodeXtensa(
 
     case 0x1: {
       // L32R (RI16): AR[t] = mem32(literal). The 16-bit imm is a negative word
-      // offset from the (word-aligned) PC.
+      // offset from the CURRENT PC with its low 2 bits cleared (ISA: base =
+      // PC & ~3, NOT (PC+3)&~3 — they differ when PC isn't word-aligned, which
+      // is routine after a 16-bit .n instruction). ext is already a multiple of 4.
       const ext = (imm16 | 0xffff0000) << 2;
-      const target = ((ext + pc + 3) & 0xfffffffc) >>> 0;
+      const target = (ext + (pc & ~3)) >>> 0;
       return make("l32r", { target });
     }
 
@@ -184,8 +186,10 @@ export function decodeXtensa(
         const imm = imm7 >> 5 === 0x3 ? signExtend(imm7, 7) : imm7;
         return make("movi.n", { imm }); // dest = s
       }
+      // BEQZ.N/BNEZ.N: the 6-bit offset is UNSIGNED (forward-only, +4..+67) —
+      // unlike J and the 12-bit BEQZ/BNEZ which are signed. Do NOT sign-extend.
       const imm6 = (((b0 >> 4) & 0x3) << 4) | ((b1 >> 4) & 0xf);
-      const target = (pc + 4 + signExtend(imm6, 6)) >>> 0;
+      const target = (pc + 4 + imm6) >>> 0;
       return make(t <= 0xb ? "beqz.n" : "bnez.n", { target }); // branch on AR[s]
     }
 

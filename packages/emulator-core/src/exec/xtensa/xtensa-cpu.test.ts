@@ -74,17 +74,21 @@ describe("XtensaCpu execution", () => {
     expect(cpu.ar[2]).toBe(0x1234abcd | 0);
   });
 
-  it("runs a counted loop (sum 5..1 = 15) with add.n/addi.n/bnez.n", () => {
-    // a2 = 5 (counter), a3 = 0 (sum); loop { a3+=a2; a2--; } while a2 != 0
-    const movi5 = xasm.movi(2, 5); // 3 bytes @ +0
-    const movi0 = xasm.movi(3, 0); // 3 bytes @ +3
-    const loopAt = BASE + movi5.length + movi0.length; // +6
+  it("runs a counted loop (sum 5..1 = 15): forward beqz.n exit + backward j", () => {
+    // a2 = 5 (counter), a3 = 0 (sum)
+    // loop: if a2==0 goto done; a3 += a2; a2--; j loop;  done: ret
+    // (beqz.n is forward-only; the backward edge uses the signed J.)
+    const head = xasm.movi(2, 5).length + xasm.movi(3, 0).length; // 6
+    const loopAt = BASE + head;
+    const jAt = loopAt + 2 /*beqz.n*/ + 2 /*add.n*/ + 2; /*addi.n*/
+    const doneAt = jAt + 3; /*j*/
     const cpu = run([
-      movi5,
-      movi0,
-      xasm.addN(3, 3, 2), // @loop
+      xasm.movi(2, 5),
+      xasm.movi(3, 0),
+      xasm.beqzN(2, doneAt, loopAt),
+      xasm.addN(3, 3, 2),
       xasm.addiN(2, 2, -1),
-      xasm.bnezN(2, loopAt, loopAt + 2 + 2), // pc of bnez.n = loop + 4
+      xasm.j(loopAt, jAt),
       xasm.ret(),
     ]);
     expect(cpu.ar[3]).toBe(15);
