@@ -19,11 +19,6 @@
   letter-spacing: 0.18em;
   color: var(--fw-text);
 }
-.fw-devpanel__phase {
-  font-size: var(--fw-fs-xs);
-  color: var(--fw-text-faint);
-  font-family: var(--fw-font-mono);
-}
 
 /* ---- Sections -------------------------------------------------------- */
 .fw-section {
@@ -31,9 +26,6 @@
   border-radius: var(--fw-radius-panel);
   background: var(--fw-panel-raised);
   border: 1px solid var(--fw-border-soft);
-}
-.fw-section--muted {
-  opacity: 0.7;
 }
 .fw-section__title {
   margin: 0 0 var(--fw-space-3);

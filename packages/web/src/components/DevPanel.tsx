@@ -7,30 +7,21 @@ import { LuaPanel } from "./LuaPanel.js";
 import "./DevPanel.css";
 
 /**
- * The development side panel: live device status, the Lua run panel, power
- * controls, and the SD card browser with import/export. Phase 3 grows this into
- * the full in-browser editor / file manager / state inspector.
+ * The development side panel (the "Dev" tab): live device status, the Lua/native
+ * run panel, power controls, and the SD card browser with import/export. The
+ * in-browser code editor lives in the adjacent "Editor" tab.
  */
 export function DevPanel() {
   return (
     <div className="fw-devpanel" role="region" aria-label="Developer tools">
       <header className="fw-devpanel__head">
         <h2 className="fw-devpanel__title">DEV TOOLS</h2>
-        <span className="fw-devpanel__phase">Phase 1</span>
       </header>
 
       <StatusSection />
       <LuaPanel />
       <PowerSection />
       <StorageSection />
-
-      <section className="fw-section fw-section--muted">
-        <h3 className="fw-section__title">Editor</h3>
-        <p className="fw-section__note">
-          In-browser Lua editor with hot-reload arrives in Phase 3. For now,
-          edit files on disk and re-run.
-        </p>
-      </section>
     </div>
   );
 }

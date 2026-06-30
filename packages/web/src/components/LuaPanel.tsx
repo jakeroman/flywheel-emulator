@@ -7,8 +7,9 @@ import "./LuaPanel.css";
 /**
  * Dev launcher + console. Games normally run via the on-device BIOS (power on →
  * selector → A), but this panel can launch any `.lua` directly for quick
- * iteration, and surfaces BIOS state, errors, and `print`/`fw.log` output. The
- * full in-browser editor with hot-reload lands in Phase 3.
+ * iteration, and surfaces BIOS state, errors, `print`/`fw.log` output, and any
+ * native (.fwmod) modules the current game declares. The full in-browser editor
+ * with hot-reload lives in the Editor tab.
  */
 export function LuaPanel() {
   const device = useDevice();

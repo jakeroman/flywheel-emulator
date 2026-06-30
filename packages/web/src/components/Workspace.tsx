@@ -7,9 +7,9 @@ type Tab = "editor" | "dev";
 
 /**
  * The dev workspace beside the device. Two tabs: the Editor (file tree + code
- * editor + run output — the Phase 3 iterate loop) and Dev (device status, power
- * controls, SD import/export, Lua launcher/console). Both panes stay mounted so
- * switching tabs preserves editor and scroll state.
+ * editor + run output — the edit-and-run loop) and Dev (device status, power
+ * controls, SD import/export, Lua/native launcher + console). Both panes stay
+ * mounted so switching tabs preserves editor and scroll state.
  */
 export function Workspace() {
   const [tab, setTab] = useState<Tab>("editor");
