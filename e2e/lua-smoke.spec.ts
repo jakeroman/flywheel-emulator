@@ -1,6 +1,6 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
-const inkRatio = (page: import("@playwright/test").Page) =>
+const inkRatio = (page: Page) =>
   page.evaluate(() => {
     const canvas = document.querySelector("canvas");
     if (!canvas) return -1;
@@ -12,40 +12,59 @@ const inkRatio = (page: import("@playwright/test").Page) =>
     return dark / (canvas.width * canvas.height);
   });
 
-async function run(page: import("@playwright/test").Page, path: string) {
+// The dev panel's first badge mirrors the BIOS screen (boot/menu/game/…).
+const screenBadge = (page: Page) => page.locator(".fw-lua__badge").first();
+
+async function waitForSeed(page: Page) {
   await expect(
-    page.locator(`.fw-lua__select option[value="${path}"]`),
+    page.locator('.fw-lua__select option[value="/games/snake/main.lua"]'),
   ).toHaveCount(1, { timeout: 15_000 });
-  await page.selectOption(".fw-lua__select", path);
-  await page.getByRole("button", { name: "Run" }).click();
-  await expect(page.locator(".fw-lua__badge")).toHaveText("running", {
-    timeout: 15_000,
-  });
-  await expect(page.locator(".fw-lua__error")).toHaveCount(0);
 }
 
 /**
- * Phase 1 deliverable check: Lua apps load from the SD card and run in the
- * browser, drawing to the display with no errors. Exercises wasmoon loading the
- * local wasm, the `fw` API bridge, the host run loop, and switching games.
+ * Phase 2 deliverable: powering on boots the BIOS into the game selector, A
+ * launches the selected game (handing the display to the Lua runtime), and
+ * Menu returns to the selector — all in a real browser against the prod build.
  */
-test("runs and switches between seeded Lua games", async ({ page }) => {
+test("boots the BIOS, launches a game, and returns to the menu", async ({
+  page,
+}) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (e) => pageErrors.push(String(e)));
 
   await page.goto("/");
   await expect(page.locator(".fw-device")).toBeVisible();
+  await waitForSeed(page);
 
-  // First game: the bouncing-ball demo.
-  await run(page, "/games/demo/main.lua");
-  await expect(page.locator(".fw-lua__console")).toContainText(
-    "demo started: 400x240",
-  );
+  // Power on → boot splash → game selector.
+  await page.getByRole("switch", { name: "Power switch" }).click();
+  // Move focus off the switch so Enter (Menu) doesn't toggle power.
+  await page.locator(".fw-display__bezel").click();
+  await expect(screenBadge(page)).toHaveText("menu", { timeout: 10_000 });
+
+  // A launches the selected game.
+  await page.keyboard.press("x");
+  await expect(screenBadge(page)).toHaveText("game", { timeout: 10_000 });
   await expect.poll(() => inkRatio(page), { timeout: 5_000 }).toBeGreaterThan(0);
 
-  // Switching to a second game loads and draws it (not a frozen first frame).
-  await run(page, "/games/snake/main.lua");
-  await expect.poll(() => inkRatio(page), { timeout: 5_000 }).toBeGreaterThan(0);
+  // Menu (Enter) exits back to the selector.
+  await page.keyboard.press("Enter");
+  await expect(screenBadge(page)).toHaveText("menu", { timeout: 10_000 });
 
+  expect(pageErrors).toEqual([]);
+});
+
+test("dev launcher runs a script directly", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (e) => pageErrors.push(String(e)));
+
+  await page.goto("/");
+  await waitForSeed(page);
+
+  await page.selectOption(".fw-lua__select", "/games/snake/main.lua");
+  await page.getByRole("button", { name: "Launch" }).click();
+
+  await expect(screenBadge(page)).toHaveText("game", { timeout: 10_000 });
+  await expect.poll(() => inkRatio(page), { timeout: 5_000 }).toBeGreaterThan(0);
   expect(pageErrors).toEqual([]);
 });

@@ -9,6 +9,9 @@ export * from "./gfx/index.js";
 // Lua runtime (wasmoon) + the Flywheel `fw` API.
 export * from "./lua/index.js";
 
+// BIOS: boot, game selector, settings, power management.
+export * from "./bios/index.js";
+
 // Concrete emulated implementations.
 // (GamepadEvents / PowerModelEvents / SDEvents are part of the HAL contracts
 // above, re-exported via ./hal/index.js.)

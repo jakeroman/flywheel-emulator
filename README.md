@@ -88,10 +88,12 @@ On-screen buttons can also be clicked/tapped.
 - **Phase 1 — Simulated hardware layer + Lua runtime.** ✅ HAL + graphics + font
   + wasmoon; the `fw` Lua API for display, gamepad, SD, power, and audio; SD
   persistence + import/export.
-- **Phase 2 — BIOS simulation.** _(next)_ Boot, game selector, settings, charge
-  tracking.
-- **Phase 3 — In-emulator dev environment.** Lua editor + hot-reload, SD file
-  editor, live power/state inspection.
+- **Phase 2 — BIOS simulation.** ✅ Power on boots into a game selector (scans
+  `/games`), single-game auto-run countdown, settings (Wi-Fi slots + battery),
+  charge-on-boot comparison, and light-sleep when idle. Press **Menu** in a game
+  to return to the selector.
+- **Phase 3 — In-emulator dev environment.** _(next)_ Lua editor + hot-reload,
+  SD file editor, live power/state inspection.
 - **Phase 4 — Native C toolchain (CLI).** Compile dynamic C modules to `.fwmod`.
 - **Phase 5 — Dynamic C module execution.** Evaluate QEMU/Wokwi ESP32 cores
   before hand-rolling an interpreter; build a faithfulness validation harness.

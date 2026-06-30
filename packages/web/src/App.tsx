@@ -1,15 +1,15 @@
 import { useEffect, useState } from "react";
 import { EmulatedFlywheelDevice } from "@flywheel/emulator-core";
 import { DeviceProvider } from "./device/device-context.js";
-import { LuaProvider } from "./lua/lua-context.js";
-import { useLuaController } from "./lua/useLuaController.js";
+import { BiosProvider } from "./bios/bios-context.js";
+import { useBios } from "./bios/useBios.js";
 import { useSdPersistence } from "./storage/useSdPersistence.js";
 import { WebAudioDevice } from "./audio/web-audio-device.js";
 import { DeviceShell } from "./components/DeviceShell.js";
 import { DevPanel } from "./components/DevPanel.js";
 import { useEmulatorClock } from "./hooks/useEmulatorClock.js";
 import { useKeyboardInput } from "./input/keyboard.js";
-import { drawBootTestPattern } from "./boot/test-pattern.js";
+import { drawIdleScreen } from "./boot/idle-screen.js";
 import "./App.css";
 
 export function App() {
@@ -18,15 +18,16 @@ export function App() {
   const [device] = useState(
     () => new EmulatedFlywheelDevice({ initialBatteryLevel: 0.78, audio }),
   );
-  const lua = useLuaController(device);
 
-  // Persist the SD card to IndexedDB (seeds mock content on first run).
+  // Persist the SD card to IndexedDB (seeds demo content on first run).
   useSdPersistence(device);
 
+  const biosController = useBios(device);
+
   useEffect(() => {
-    // A memory display retains its last image even when off, so it's fine to
-    // show the boot pattern before power-on.
-    drawBootTestPattern(device.display);
+    // The device starts powered off; show a "press power" hint on the
+    // bistable display until the BIOS boots and takes over.
+    drawIdleScreen(device.display);
   }, [device]);
 
   // Resume the AudioContext on the first user gesture (autoplay policy).
@@ -40,12 +41,12 @@ export function App() {
     };
   }, [audio]);
 
-  useEmulatorClock(device, lua.runtime);
+  useEmulatorClock(device, biosController.bios);
   useKeyboardInput(device);
 
   return (
     <DeviceProvider device={device}>
-      <LuaProvider controller={lua}>
+      <BiosProvider controller={biosController}>
         <div className="fw-app">
           <header className="fw-app__header">
             <h1 className="fw-app__title">Flywheel Emulator</h1>
@@ -62,7 +63,7 @@ export function App() {
             <DevPanel />
           </aside>
         </div>
-      </LuaProvider>
+      </BiosProvider>
     </DeviceProvider>
   );
 }

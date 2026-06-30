@@ -65,7 +65,7 @@ export class LuaRuntime {
     const seq = ++this.loadSeq;
     this.updateFn = null;
     this.drawFn = null;
-    await this.closeEngine();
+    this.closeEngine();
     if (seq !== this.loadSeq) return false; // superseded during teardown
     this.timeMs = 0;
 
@@ -145,11 +145,11 @@ export class LuaRuntime {
     this.loadSeq++; // cancel any in-flight load
     this.updateFn = null;
     this.drawFn = null;
-    await this.closeEngine();
+    this.closeEngine();
     if (this._status !== "idle") this.setStatus("idle");
   }
 
-  private async closeEngine(): Promise<void> {
+  private closeEngine(): void {
     if (this.engine) {
       closeQuietly(this.engine);
       this.engine = null;
