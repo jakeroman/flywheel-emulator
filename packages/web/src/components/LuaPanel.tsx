@@ -37,10 +37,16 @@ export function LuaPanel() {
       <h3 className="fw-section__title">Lua</h3>
 
       <div className="fw-lua__statusrow" aria-live="polite">
-        <span className="fw-lua__badge">{snapshot.screen}</span>
+        <span
+          className="fw-lua__badge"
+          aria-label={`BIOS screen: ${snapshot.screen}`}
+        >
+          {snapshot.screen}
+        </span>
         {inGame && (
           <span
             className={`fw-lua__badge fw-lua__badge--${snapshot.gameStatus}`}
+            aria-label={`Game status: ${snapshot.gameStatus}`}
           >
             {snapshot.gameStatus}
           </span>
@@ -79,7 +85,7 @@ export function LuaPanel() {
         <button
           type="button"
           className="fw-lua__btn"
-          onClick={() => bios.bios.returnToMenu()}
+          onClick={bios.returnToMenu}
           disabled={!inGame}
           aria-label="Exit to menu"
           title="Exit to menu"

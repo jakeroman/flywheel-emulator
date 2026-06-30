@@ -116,6 +116,9 @@ export class Bios {
 
   /** Power-on boot: scan games, compute the charge report, show the splash. */
   boot(): void {
+    // Idempotent: a redundant boot (a remount, or launchScript powering on)
+    // must not re-scan, re-record the charge baseline, or stomp a live game.
+    if (this.booted) return;
     this.booted = true;
     this.error = null;
     this.settings = loadSettings(this.device.sd);
@@ -145,7 +148,7 @@ export class Bios {
     this.settings.lastLevel = this.device.power.getSnapshot().level;
     this.settings.lastPlayedAt = Date.now();
     saveSettings(this.device.sd, this.settings);
-    void this.runtime.dispose();
+    this.dispose();
     this.currentGame = null;
     this.setScreen("boot");
   }
@@ -159,8 +162,10 @@ export class Bios {
 
   /** Dev shortcut: launch an arbitrary script path as a game, bypassing the menu. */
   async launchScript(path: string): Promise<void> {
-    if (!this.device.poweredOn) this.device.powerOn();
+    // Mark booted first so powering on does not also trigger a full boot()
+    // (which would re-scan and overwrite the charge baseline mid-session).
     this.booted = true;
+    if (!this.device.poweredOn) this.device.powerOn();
     await this.launch({
       id: path,
       path,
@@ -169,11 +174,18 @@ export class Bios {
     });
   }
 
+  /** Free the owned Lua engine, without the power-off settings side effects. */
+  dispose(): void {
+    void this.runtime.dispose();
+  }
+
   update(dtSeconds: number): void {
     if (!this.booted) return;
     const dtMs = dtSeconds * 1000;
     const gp = this.device.gamepad;
-    const active = ALL_BUTTONS.some((b) => gp.wasPressed(b));
+    // A held button counts as activity too, so the device doesn't light-sleep
+    // while the user is holding a direction.
+    const active = ALL_BUTTONS.some((b) => gp.wasPressed(b) || gp.isDown(b));
     this.idleMs = active ? 0 : this.idleMs + dtMs;
 
     switch (this.screen) {
@@ -275,7 +287,8 @@ export class Bios {
     // Placeholder configuration: cycle a demo SSID on/off and persist it.
     const wifi = [...this.settings.wifi];
     while (wifi.length < WIFI_SLOTS) wifi.push({ ssid: "" });
-    wifi[slot] = { ssid: wifi[slot].ssid ? "" : `Flywheel-${slot + 1}` };
+    const current = wifi[slot]?.ssid ?? "";
+    wifi[slot] = { ssid: current ? "" : `Flywheel-${slot + 1}` };
     this.settings = { ...this.settings, wifi };
     saveSettings(this.device.sd, this.settings);
     this.emit();
@@ -335,7 +348,7 @@ export class Bios {
     const g = this.gfx;
     g.clear();
     centerText(g, "FLYWHEEL", 86);
-    centerText(g, `FW-01 · SOLAR  v${FIRMWARE_VERSION}`, 104);
+    centerText(g, `FW-01  SOLAR  v${FIRMWARE_VERSION}`, 104);
 
     const report = this.chargeReport;
     if (report && report.gainedLevel > 0.005) {
@@ -354,7 +367,7 @@ export class Bios {
     const game = this.games[this.selected];
     g.clear();
     centerText(g, "LOADING", 70);
-    centerText(g, (game?.title ?? "").toUpperCase(), 92);
+    centerText(g, truncate((game?.title ?? "").toUpperCase(), 40), 92);
     const secs = Math.ceil(this.timerMs / 1000);
     centerText(g, `Starting in ${secs}...`, 120);
     centerText(g, "A START    B CANCEL", H - 28);
@@ -383,7 +396,7 @@ export class Bios {
         const sel = idx === this.selected;
         if (sel) g.rectFill(6, y, W - 12, rowH - 4, true);
         drawIcon(g, 12, y + 2, 22, game.title, sel);
-        g.print(game.title, 42, y + 9, !sel);
+        g.print(truncate(game.title, 48), 42, y + 9, !sel);
       }
     }
     this.drawFooter("A LOAD    MENU = SETTINGS");
@@ -397,7 +410,7 @@ export class Bios {
     const rows: string[] = [];
     for (let i = 0; i < WIFI_SLOTS; i++) {
       const ssid = this.settings.wifi[i]?.ssid;
-      rows.push(`Wi-Fi ${i + 1}:  ${ssid ? ssid : "—"}`);
+      rows.push(`Wi-Fi ${i + 1}:  ${ssid ? ssid : "-"}`);
     }
     rows.push("Back");
 
@@ -417,10 +430,12 @@ export class Bios {
 
   private drawGameError(): void {
     const g = this.gfx;
-    g.rectFill(40, 90, W - 80, 60, false);
+    // Start clean: a failed load may leave the previous screen's frame behind.
+    g.clear();
     g.rect(40, 90, W - 80, 60, true);
     g.print("SCRIPT ERROR", 52, 100, true);
-    g.print(truncate(this.error ?? "", 44), 52, 114, true);
+    const msg = (this.error ?? "").replace(/\s+/g, " ");
+    g.print(truncate(msg, 44), 52, 114, true);
     g.print("MENU = EXIT", 52, 132, true);
   }
 
@@ -487,7 +502,7 @@ function clamp(v: number, min: number, max: number): number {
 }
 
 function truncate(s: string, n: number): string {
-  return s.length > n ? s.slice(0, n - 1) + "…" : s;
+  return s.length > n ? s.slice(0, Math.max(0, n - 3)) + "..." : s;
 }
 
 function basename(path: string): string {

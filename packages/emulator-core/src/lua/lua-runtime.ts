@@ -22,7 +22,17 @@ export interface LuaRuntimeOptions {
    * wasmoon resolves the wasm from the filesystem.
    */
   wasmUri?: string;
+  /**
+   * Per-call wall-clock budget (ms) for a Lua callback. wasmoon installs an
+   * instruction-count hook that throws if a single _init/_update/_draw runs
+   * longer than this, so a runaway loop (e.g. `while true do end`) becomes a
+   * catchable error instead of hanging the main thread. Caught by update()/
+   * draw() → fail(), flipping status to "error" so the BIOS can recover.
+   */
+  functionTimeoutMs?: number;
 }
+
+const DEFAULT_FUNCTION_TIMEOUT_MS = 500;
 
 type LuaFn = (...args: unknown[]) => unknown;
 
@@ -78,7 +88,11 @@ export class LuaRuntime {
     const factory = new LuaFactory(this.options.wasmUri);
     let engine: LuaEngine;
     try {
-      engine = await factory.createEngine({ injectObjects: true });
+      engine = await factory.createEngine({
+        injectObjects: true,
+        functionTimeout:
+          this.options.functionTimeoutMs ?? DEFAULT_FUNCTION_TIMEOUT_MS,
+      });
     } catch (error) {
       if (seq === this.loadSeq) this.fail(error);
       return false;

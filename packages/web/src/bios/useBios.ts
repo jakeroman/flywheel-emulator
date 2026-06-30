@@ -11,13 +11,16 @@ import glueWasmUrl from "wasmoon/dist/glue.wasm?url";
 const MAX_LOG_LINES = 200;
 
 export interface BiosController {
-  bios: Bios;
   snapshot: BiosSnapshot;
   logs: string[];
   error: string | null;
   /** Dev shortcut: launch a script path as a game, bypassing the selector. */
   launchScript: (path: string) => Promise<void>;
+  /** Return to the game selector (stopping a running game). */
+  returnToMenu: () => void;
   clearLogs: () => void;
+  /** The underlying BIOS, for the run loop. */
+  bios: Bios;
 }
 
 /**
@@ -51,6 +54,7 @@ export function useBios(device: EmulatedFlywheelDevice): BiosController {
       offLog();
       offError();
       offPower();
+      bios.dispose(); // free the wasmoon engine on unmount
     };
   }, [device, bios]);
 
@@ -63,7 +67,16 @@ export function useBios(device: EmulatedFlywheelDevice): BiosController {
     [bios],
   );
 
+  const returnToMenu = useCallback(() => bios.returnToMenu(), [bios]);
   const clearLogs = useCallback(() => setLogs([]), []);
 
-  return { bios, snapshot, logs, error, launchScript, clearLogs };
+  return {
+    snapshot,
+    logs,
+    error,
+    launchScript,
+    returnToMenu,
+    clearLogs,
+    bios,
+  };
 }

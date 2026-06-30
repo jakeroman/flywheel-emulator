@@ -10,7 +10,8 @@ import type { Graphics } from "../gfx/graphics.js";
  *
  * Layout:
  *   fw.width / fw.height           display size
- *   fw.UP/DOWN/LEFT/RIGHT/A/B/MENU/SELECT   button ids
+ *   fw.UP/DOWN/LEFT/RIGHT/A/B/SELECT   button ids (Menu is reserved by the
+ *                                      BIOS as the system/home button)
  *   fw.btn(id) / fw.btnp(id)       held / pressed-this-frame
  *   fw.gfx.{cls,pixel,line,rect,rectfill,circle,circfill,print,text_width}
  *   fw.fs.{read,write,exists,list,mkdir,remove,stat}   resident SD (sync)
@@ -32,8 +33,11 @@ export function createFlywheelApi(
 ): Record<string, unknown> {
   const { device, gfx } = ctx;
 
+  // Menu is reserved by the BIOS as the system/home button; games never see it.
   const toButton = (v: unknown): Button | null =>
-    typeof v === "string" && BUTTON_SET.has(v) ? (v as Button) : null;
+    typeof v === "string" && BUTTON_SET.has(v) && v !== Button.Menu
+      ? (v as Button)
+      : null;
   const onFlag = (v: unknown, dflt = true): boolean =>
     v === undefined || v === null ? dflt : Boolean(v);
   // Coerce to a finite number; NaN/Infinity → 0 so they can't reach the
@@ -53,7 +57,6 @@ export function createFlywheelApi(
     RIGHT: Button.Right,
     A: Button.A,
     B: Button.B,
-    MENU: Button.Menu,
     SELECT: Button.Select,
 
     btn: (id: unknown): boolean => {

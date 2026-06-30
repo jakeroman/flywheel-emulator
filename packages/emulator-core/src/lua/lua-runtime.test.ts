@@ -70,6 +70,19 @@ describe("LuaRuntime", () => {
     await rt.dispose();
   });
 
+  it("reserves the Menu button (not exposed to games)", async () => {
+    const device = new EmulatedFlywheelDevice();
+    const logs: string[] = [];
+    const rt = new LuaRuntime(device, { onLog: (m) => logs.push(m) });
+    device.gamepad.press("Menu"); // physically held
+    device.gamepad.poll();
+    await rt.load(
+      `fw.log(tostring(fw.MENU)); fw.log(tostring(fw.btn("Menu")))`,
+    );
+    expect(logs).toEqual(["nil", "false"]); // not exposed, and btn() guarded
+    await rt.dispose();
+  });
+
   it("reads and writes the SD card from Lua", async () => {
     const device = new EmulatedFlywheelDevice();
     const logs: string[] = [];
@@ -97,6 +110,21 @@ describe("LuaRuntime", () => {
     expect(errors[0].message).toContain("boom");
 
     rt.draw(); // no further calls once errored
+    expect(errors).toHaveLength(1);
+    await rt.dispose();
+  });
+
+  it("interrupts a runaway loop instead of hanging (function timeout)", async () => {
+    const device = new EmulatedFlywheelDevice();
+    const errors: Error[] = [];
+    const rt = new LuaRuntime(
+      device,
+      { onError: (e) => errors.push(e) },
+      { functionTimeoutMs: 50 },
+    );
+    await rt.load(`function _update() while true do end end`);
+    rt.update(0.016); // would hang forever without the timeout hook
+    expect(rt.status).toBe("error");
     expect(errors).toHaveLength(1);
     await rt.dispose();
   });

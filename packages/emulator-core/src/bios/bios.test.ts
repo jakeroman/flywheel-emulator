@@ -4,6 +4,7 @@ import { MemorySDCard, seedMockContent } from "../device/memory-sd.js";
 import { EspMode } from "../hal/power.js";
 import type { Button } from "../hal/gamepad.js";
 import { scanGames } from "./game-scan.js";
+import { loadSettings } from "./settings.js";
 import { Bios } from "./bios.js";
 
 async function bootedWithGames(): Promise<{
@@ -44,6 +45,36 @@ describe("scanGames", () => {
     const games = scanGames(sd);
     expect(games.map((g) => g.id)).toEqual(["untitled"]);
     expect(games[0].title).toBe("untitled");
+  });
+
+  it("clamps long titles and collapses control chars", () => {
+    const sd = new MemorySDCard();
+    sd.mkdirSync("/games/a", true);
+    sd.writeFileSync("/games/a/main.lua", "");
+    sd.writeFileSync(
+      "/games/a/meta.lua",
+      `return { title = "${"X".repeat(80)}" }`,
+    );
+    sd.mkdirSync("/games/b", true);
+    sd.writeFileSync("/games/b/main.lua", "");
+    sd.writeFileSync("/games/b/meta.lua", 'return { title = "line1\nline2" }');
+    const byId = Object.fromEntries(scanGames(sd).map((g) => [g.id, g.title]));
+    expect(byId.a.length).toBe(40);
+    expect(byId.b).toBe("line1 line2");
+  });
+});
+
+describe("settings", () => {
+  it("sanitizes malformed settings.json (null wifi entries, non-numeric level)", () => {
+    const sd = new MemorySDCard();
+    sd.mkdirSync("/system", true);
+    sd.writeFileSync(
+      "/system/settings.json",
+      JSON.stringify({ wifi: [null, 42, { ssid: "ok" }], lastLevel: "abc" }),
+    );
+    const s = loadSettings(sd);
+    expect(s.lastLevel).toBe(0);
+    expect(s.wifi).toEqual([{ ssid: "" }, { ssid: "" }, { ssid: "ok" }]);
   });
 });
 

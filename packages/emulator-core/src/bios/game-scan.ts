@@ -13,6 +13,7 @@ export interface GameEntry {
 }
 
 export const GAMES_DIR = "/games";
+const MAX_TITLE_LEN = 40;
 
 /**
  * Scan /games for runnable games. A game is any direct subdirectory containing
@@ -45,8 +46,20 @@ function readTitle(sd: SyncSDAccess, dir: string, fallback: string): string {
     const match = sd
       .readTextFileSync(metaPath)
       .match(/title\s*=\s*["']([^"']+)["']/);
-    return match ? match[1] : fallback;
+    if (!match) return fallback;
+    const title = sanitizeTitle(match[1]);
+    return title || fallback;
   } catch {
     return fallback;
   }
+}
+
+/** Collapse control chars/whitespace and clamp, so a long or hostile title
+ *  can't corrupt the selector layout. */
+function sanitizeTitle(raw: string): string {
+  let out = "";
+  for (const ch of raw) {
+    out += ch.charCodeAt(0) < 0x20 ? " " : ch;
+  }
+  return out.replace(/\s+/g, " ").trim().slice(0, MAX_TITLE_LEN);
 }

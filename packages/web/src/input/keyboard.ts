@@ -42,14 +42,15 @@ export const KEY_HINTS: Readonly<Record<Button, string>> = {
   [Button.Select]: "Shift",
 };
 
-function isTextEntry(target: EventTarget | null): boolean {
+// Don't steal keys from focused interactive controls: a focused <button>
+// activates on Enter/Space, and stealing those would both suppress the
+// activation AND fire a phantom gamepad press (e.g. Enter→Menu exiting a game,
+// or toggling the power switch). Gamepad keys only apply when focus is on the
+// page/device stage, not a control.
+function isInteractiveTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
-  const tag = target.tagName;
-  return (
-    tag === "INPUT" ||
-    tag === "TEXTAREA" ||
-    tag === "SELECT" ||
-    target.isContentEditable
+  return !!target.closest(
+    'button, [role="button"], a[href], input, textarea, select, [contenteditable=""], [contenteditable="true"]',
   );
 }
 
@@ -64,7 +65,7 @@ export function useKeyboardInput(
 ): void {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.repeat || isTextEntry(e.target)) return;
+      if (e.repeat || isInteractiveTarget(e.target)) return;
       const button = keymap[e.code];
       if (!button) return;
       e.preventDefault();
@@ -72,6 +73,7 @@ export function useKeyboardInput(
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
+      if (isInteractiveTarget(e.target)) return;
       const button = keymap[e.code];
       if (!button) return;
       e.preventDefault();
