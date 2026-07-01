@@ -11,9 +11,11 @@ import {
 import { WasmModuleRuntime } from "../exec/wasm-runtime.js";
 import { XtensaModuleRuntime } from "../exec/xtensa/xtensa-runtime.js";
 import { Arch, decodeFwmod } from "../fwmod/index.js";
-import type {
-  ModuleRuntime,
-  ModuleRuntimeCallbacks,
+import {
+  isAccelerator,
+  type AcceleratorRuntime,
+  type ModuleRuntime,
+  type ModuleRuntimeCallbacks,
 } from "../exec/module-runtime.js";
 import { POWER_CONSTANTS } from "../device/power-model.js";
 import { scanGames, type GameEntry } from "./game-scan.js";
@@ -94,6 +96,10 @@ export class Bios {
   private readonly wasm: WasmModuleRuntime;
   private readonly xtensa: XtensaModuleRuntime;
   private active: ModuleRuntime;
+  // Native accelerator modules a Lua game declared, loaded per-launch (one
+  // runtime each) and exposed to the game as `fw.native.<name>`.
+  private accelerators: AcceleratorRuntime[] = [];
+  private accelCallbacks!: ModuleRuntimeCallbacks;
 
   private screen: BiosScreen = "boot";
   private games: GameEntry[] = [];
@@ -129,6 +135,12 @@ export class Bios {
     this.wasm = new WasmModuleRuntime(device, callbacks);
     this.xtensa = new XtensaModuleRuntime(device, callbacks);
     this.active = this.lua;
+    // Accelerators log + surface errors, but don't drive the game-status badge
+    // (that tracks `active`, the game itself).
+    this.accelCallbacks = {
+      onLog: callbacks.onLog,
+      onError: callbacks.onError,
+    };
   }
 
   get gameStatus(): LuaStatus {
@@ -215,20 +227,24 @@ export class Bios {
     // (which would re-scan and overwrite the charge baseline mid-session).
     this.booted = true;
     if (!this.device.poweredOn) this.device.powerOn();
-    // A raw script path bypasses manifest resolution (no game-dir context).
+    // Keep the explicit entry, but pick up any native modules the game dir's
+    // manifest declares — so the editor Run / dev launcher get accelerators too.
+    // (A script outside a game dir just resolves to no modules.)
+    const resolved = resolveGame(this.device.sd, dirname(path), basename(path));
     await this.start({
       title: basename(path),
       entryPath: path,
-      modules: [],
-      warnings: [],
+      modules: resolved.modules,
+      warnings: resolved.source === "game.json" ? resolved.warnings : [],
     });
   }
 
-  /** Free both execution backends, without the power-off settings side effects. */
+  /** Free all execution backends, without the power-off settings side effects. */
   dispose(): void {
     void this.lua.dispose();
     void this.wasm.dispose();
     void this.xtensa.dispose();
+    this.disposeAccelerators();
   }
 
   update(dtSeconds: number): void {
@@ -371,6 +387,7 @@ export class Bios {
   }): Promise<void> {
     this.error = null;
     void this.active.dispose(); // stop whatever ran last before switching
+    this.disposeAccelerators();
     for (const w of resolved.warnings) this.events.emit("log", w);
     this.current = {
       title: resolved.title,
@@ -402,12 +419,77 @@ export class Bios {
         }
       } else {
         this.active = this.lua;
-        await this.lua.load(this.device.sd.readTextFileSync(entry));
+        // Load the game's declared native helpers (each into its own backend by
+        // arch) and expose them as fw.native.<name> to the Lua game.
+        const native = await this.loadAccelerators(resolved.modules);
+        await this.lua.load(this.device.sd.readTextFileSync(entry), native);
       }
     } catch (e) {
       this.error = e instanceof Error ? e.message : String(e);
       this.emit();
     }
+  }
+
+  /**
+   * Load each declared module as an accelerator (own runtime, picked by arch),
+   * returning a name→runtime map for fw.native. Never throws: a module that
+   * can't load is logged and skipped, so one bad helper can't sink the game.
+   */
+  private async loadAccelerators(
+    modules: ReadonlyArray<ResolvedModule>,
+  ): Promise<Record<string, AcceleratorRuntime>> {
+    const native: Record<string, AcceleratorRuntime> = {};
+    for (const m of modules) {
+      let bytes: Uint8Array;
+      try {
+        if (!this.device.sd.existsSync(m.path)) continue;
+        bytes = this.device.sd.readFileSync(m.path);
+      } catch {
+        continue;
+      }
+      let arch = -1;
+      try {
+        arch = decodeFwmod(bytes).arch;
+      } catch {
+        continue;
+      }
+      const rt =
+        arch === Arch.XtensaLx7
+          ? new XtensaModuleRuntime(this.device, this.accelCallbacks)
+          : arch === Arch.Wasm32
+            ? new WasmModuleRuntime(this.device, this.accelCallbacks)
+            : null;
+      if (!rt) {
+        this.events.emit("log", `module ${m.name}: no in-browser backend for its arch`);
+        continue;
+      }
+      try {
+        const ok = await rt.load(bytes);
+        if (ok && isAccelerator(rt)) {
+          native[m.name] = rt;
+          this.accelerators.push(rt);
+          this.events.emit(
+            "log",
+            `module ${m.name}: loaded (${rt.exports.length} exports)`,
+          );
+        } else {
+          void rt.dispose();
+          this.events.emit("log", `module ${m.name}: failed to load as accelerator`);
+        }
+      } catch (e) {
+        void rt.dispose();
+        this.events.emit(
+          "log",
+          `module ${m.name}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+    return native;
+  }
+
+  private disposeAccelerators(): void {
+    for (const a of this.accelerators) void a.dispose();
+    this.accelerators = [];
   }
 
   /** Decode + integrity-check each declared native module (no execution yet). */
@@ -461,6 +543,7 @@ export class Bios {
 
   private exitGame(): void {
     void this.active.dispose();
+    this.disposeAccelerators();
     this.current = null;
     this.error = null;
     this.idleMs = 0;
@@ -654,4 +737,9 @@ function truncate(s: string, n: number): string {
 function basename(path: string): string {
   const i = path.lastIndexOf("/");
   return i >= 0 ? path.slice(i + 1) : path;
+}
+
+function dirname(path: string): string {
+  const i = path.lastIndexOf("/");
+  return i > 0 ? path.slice(0, i) : "/";
 }

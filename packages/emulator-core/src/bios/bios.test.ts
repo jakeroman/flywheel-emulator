@@ -205,6 +205,51 @@ describe("Bios", () => {
     bios.dispose();
   });
 
+  it("loads a Lua game's declared native accelerator and lets it call in", async () => {
+    // A Lua game that offloads work to a C helper declared in its game.json.
+    const fixture = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../../../tools/fwmod/fixtures/fxmod-clang-wasm32.fwmod",
+    );
+    const device = new EmulatedFlywheelDevice();
+    device.sd.mkdirSync("/games/fx", true);
+    device.sd.writeFileSync(
+      "/games/fx/helper.fwmod",
+      new Uint8Array(readFileSync(fixture)),
+    );
+    device.sd.writeFileSync(
+      "/games/fx/game.json",
+      JSON.stringify({
+        entry: "main.lua",
+        modules: [{ name: "fx", path: "helper.fwmod" }],
+      }),
+    );
+    device.sd.writeFileSync(
+      "/games/fx/main.lua",
+      [
+        "local fx = fw.native.fx",
+        "local buf",
+        "function _init() buf = fx.alloc(64) end",
+        "function _update(dt) fx.shade(buf, 8, 8, 5); fw.log('sum=' .. math.floor(fx.sum(buf, 64))) end",
+        "function _draw() if buf.get(0) % 2 == 1 then fw.gfx.pixel(0, 0, true) end end",
+      ].join("\n"),
+    );
+
+    const logs: string[] = [];
+    const bios = new Bios(device);
+    bios.events.on("log", (m) => logs.push(m));
+    await bios.launchScript("/games/fx/main.lua");
+    expect(bios.snapshot().gameStatus).toBe("running");
+
+    bios.update(0.016); // Lua offloads to C, logs the sum
+    bios.draw(); // Lua reads a byte back and plots a pixel
+
+    expect(logs.some((l) => l.includes("fx: loaded (2 exports)"))).toBe(true);
+    expect(logs.some((l) => l.includes("768"))).toBe(true); // the C reduction
+    expect(litPixels(device)).toBeGreaterThan(0); // buf[0]=5 (odd) → pixel on
+    bios.dispose();
+  });
+
   it("clears the display on power-off", async () => {
     const { device, bios } = await bootedWithGames();
     bios.draw(); // render the menu

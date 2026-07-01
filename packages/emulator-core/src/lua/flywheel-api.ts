@@ -1,6 +1,8 @@
 import type { FlywheelDevice } from "../hal/device.js";
 import { ALL_BUTTONS, Button } from "../hal/gamepad.js";
 import type { Graphics } from "../gfx/graphics.js";
+import type { AcceleratorRuntime } from "../exec/module-runtime.js";
+import { buildNativeApi } from "./native-bridge.js";
 
 /**
  * Builds the `fw` table injected into the Lua environment — the Flywheel Lua
@@ -24,6 +26,9 @@ export interface FlywheelApiContext {
   gfx: Graphics;
   getTimeMs: () => number;
   log: (message: string) => void;
+  /** Loaded native accelerator modules exposed as `fw.native.<name>` (the
+   *  game's declared C helpers). Omit for a game with none. */
+  native?: Record<string, AcceleratorRuntime>;
 }
 
 const BUTTON_SET: ReadonlySet<string> = new Set(ALL_BUTTONS);
@@ -128,5 +133,8 @@ export function createFlywheelApi(
 
     time: (): number => ctx.getTimeMs() / 1000,
     log: (...args: unknown[]): void => ctx.log(args.map(String).join(" ")),
+
+    // Native C accelerator modules the game declared (empty table if none).
+    native: buildNativeApi(ctx.native ?? {}),
   };
 }

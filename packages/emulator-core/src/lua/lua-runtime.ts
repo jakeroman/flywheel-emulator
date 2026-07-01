@@ -1,6 +1,7 @@
 import type { LuaEngine } from "wasmoon";
 import type { FlywheelDevice } from "../hal/device.js";
 import { Graphics } from "../gfx/graphics.js";
+import type { AcceleratorRuntime } from "../exec/module-runtime.js";
 import { createFlywheelApi } from "./flywheel-api.js";
 
 export type LuaStatus = "idle" | "running" | "error";
@@ -71,7 +72,10 @@ export class LuaRuntime {
    * newer load() (or dispose()) supersedes an in-flight one, and the superseded
    * engine is closed rather than leaked or left running.
    */
-  async load(source: string): Promise<boolean> {
+  async load(
+    source: string,
+    native: Record<string, AcceleratorRuntime> = {},
+  ): Promise<boolean> {
     const seq = ++this.loadSeq;
     this.updateFn = null;
     this.drawFn = null;
@@ -111,6 +115,7 @@ export class LuaRuntime {
       gfx: this.gfx,
       getTimeMs: () => this.timeMs,
       log: (message) => this.callbacks.onLog?.(message),
+      native,
     });
     engine.global.set("fw", api);
     engine.global.set("print", (...args: unknown[]) =>
