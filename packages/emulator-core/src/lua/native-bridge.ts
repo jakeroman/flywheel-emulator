@@ -26,6 +26,9 @@ export interface NativeBuffer {
   get(index: unknown): number;
   set(index: unknown, value: unknown): void;
   bytes(): number[];
+  /** The raw bytes as a Uint8Array (for JS consumers like fw.gfx.blit; not
+   *  meant for Lua, which should use bytes()). */
+  raw(): Uint8Array;
 }
 
 const asInt = (v: unknown): number => {
@@ -53,6 +56,9 @@ function makeBuffer(
     },
     bytes(): number[] {
       return [...rt.read(ptr, length)];
+    },
+    raw(): Uint8Array {
+      return rt.read(ptr, length);
     },
   };
 }

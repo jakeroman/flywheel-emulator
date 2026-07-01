@@ -102,6 +102,36 @@ export function createFlywheelApi(
       print: (text: unknown, x: unknown, y: unknown, on?: unknown) =>
         gfx.print(String(text ?? ""), n(x), n(y), onFlag(on)),
       text_width: (text: unknown): number => gfx.textWidth(String(text ?? "")),
+      // Draw a w×h, 1-byte-per-pixel native buffer at (x,y): a nonzero byte is
+      // an "on" (dark) pixel. The canonical "C fills a framebuffer, HAL blits
+      // it" path — one bulk read of the module's memory, then a JS pixel loop.
+      blit: (
+        buf: unknown,
+        x: unknown,
+        y: unknown,
+        w: unknown,
+        h: unknown,
+      ): void => {
+        const raw =
+          buf && typeof (buf as { raw?: unknown }).raw === "function"
+            ? (buf as { raw(): Uint8Array }).raw()
+            : null;
+        if (!raw) return;
+        const ox = n(x);
+        const oy = n(y);
+        const bw = n(w);
+        const bh = n(h);
+        // Opaque: every cell sets its pixel (on OR off), so a full-frame blit
+        // needs no cls and never ghosts the previous frame.
+        for (let row = 0; row < bh; row++) {
+          const base = row * bw;
+          for (let col = 0; col < bw; col++) {
+            const i = base + col;
+            if (i >= raw.length) return;
+            gfx.pixel(ox + col, oy + row, raw[i] !== 0);
+          }
+        }
+      },
     },
 
     fs: {

@@ -15,7 +15,7 @@ async function bootedWithGames(): Promise<{
   bios: Bios;
 }> {
   const device = new EmulatedFlywheelDevice();
-  await seedMockContent(device.sd); // demo + snake → 2 games
+  await seedMockContent(device.sd); // demo + snake + ripple → 3 games
   const bios = new Bios(device);
   device.powerOn();
   bios.boot();
@@ -49,7 +49,11 @@ describe("scanGames", () => {
     const sd = new MemorySDCard();
     await seedMockContent(sd);
     const games = scanGames(sd);
-    expect(games.map((g) => g.title)).toEqual(["Bounce Demo", "Snake"]);
+    expect(games.map((g) => g.title).sort()).toEqual([
+      "Bounce Demo",
+      "Ripple (C)",
+      "Snake",
+    ]);
     expect(games.every((g) => g.mainPath.endsWith("/main.lua"))).toBe(true);
   });
 
@@ -111,15 +115,20 @@ describe("Bios", () => {
     const { bios } = await bootedWithGames();
     const s = bios.snapshot();
     expect(s.screen).toBe("menu");
-    expect(s.games.map((g) => g.title)).toEqual(["Bounce Demo", "Snake"]);
+    expect(s.games.map((g) => g.title).sort()).toEqual([
+      "Bounce Demo",
+      "Ripple (C)",
+      "Snake",
+    ]);
   });
 
   it("navigates the selector and opens settings", async () => {
     const { device, bios } = await bootedWithGames();
+    const n = bios.snapshot().games.length; // 3 seeded games
     expect(bios.snapshot().selectedIndex).toBe(0);
     tap(device, bios, "Down");
     expect(bios.snapshot().selectedIndex).toBe(1);
-    tap(device, bios, "Down"); // wraps
+    for (let i = 0; i < n - 1; i++) tap(device, bios, "Down"); // wrap back to 0
     expect(bios.snapshot().selectedIndex).toBe(0);
 
     tap(device, bios, "Menu");
@@ -247,6 +256,22 @@ describe("Bios", () => {
     expect(logs.some((l) => l.includes("fx: loaded (2 exports)"))).toBe(true);
     expect(logs.some((l) => l.includes("768"))).toBe(true); // the C reduction
     expect(litPixels(device)).toBeGreaterThan(0); // buf[0]=5 (odd) → pixel on
+    bios.dispose();
+  });
+
+  it("runs the seeded C-accelerated Ripple demo end-to-end", async () => {
+    const device = new EmulatedFlywheelDevice();
+    await seedMockContent(device.sd); // includes /games/ripple + ripple.fwmod
+    const bios = new Bios(device);
+    await bios.launchScript("/games/ripple/main.lua");
+    expect(bios.snapshot().gameStatus).toBe("running");
+
+    bios.update(0.016);
+    bios.draw();
+    const lit = litPixels(device);
+    // The C render() produced a real pattern: some pixels on, some off.
+    expect(lit).toBeGreaterThan(0);
+    expect(lit).toBeLessThan(400 * 240);
     bios.dispose();
   });
 

@@ -330,10 +330,69 @@ end
 `;
 
 /**
+ * A Lua game whose whole visual is produced by a C accelerator: it allocates a
+ * full-screen buffer, and each frame calls render() (from ripple.fwmod) to fill
+ * all 96000 pixels, then blits the result. The per-pixel work runs in C.
+ */
+const RIPPLE_LUA = `-- Ripple: a full-screen effect rendered by a C accelerator.
+-- render() lives in ripple.c (compiled to ripple.fwmod); Lua just drives it.
+local fx = fw.native.fx
+local W, H = fw.width, fw.height
+local buf
+local t = 0
+function _init()
+  buf = fx.alloc(W * H)
+end
+function _update(dt)
+  t = t + 2
+  if fw.btnp(fw.A) then t = 0 end
+end
+function _draw()
+  fx.render(buf, W, H, t)
+  fw.gfx.blit(buf, 0, 0, W, H)
+end
+`;
+
+const RIPPLE_GAME_JSON =
+  '{ "title": "Ripple (C)", "entry": "main.lua",\n' +
+  '  "modules": [{ "name": "fx", "path": "ripple.fwmod" }] }\n';
+
+// ripple.fwmod — examples/ripple.c compiled with clang --target=wasm32 by the
+// fwmod CLI, base64-embedded so the seed can ship a real native helper on the
+// SD. Rebuild: python -m fwmod build examples/ripple.c --arch wasm32 --cc <clang>
+// -o fixtures/ripple-wasm32.fwmod, then re-encode.
+const RIPPLE_FWMOD_B64 =
+  "RldNRAEAAQAEAAAA4wIAAAAAAAAAAAAAAAAAABQw+OoAYXNtAQAAAAEVBGABfwF/YAAAYAF9AGAEf39/fwF/AwYFAAECAQMEBQFwAQUFBQMBAAIGCAF/AUGAgAQLBzADBm1lbW9yeQIAB2Z3X21haW4AABlfX2luZGlyZWN0X2Z1bmN0aW9uX3RhYmxlAQAJCgEAQQELBAECAwQKxQEFCABBgICEgAALAgALAgALAgALsAEBCn8gAkF+bSEEIAFBfm0hBQJAIAJBAUgNAEEAIQYgAUEBSCEHIAMhCANAAkAgBw0AIAYgBGoiCSAJbCEKIAghCyAFIQkgACEMIAEhDQNAIAwgCSAJbCAKakEGdiADa0EDdiALQQR2c0EBcToAACALQQFqIQsgCUEBaiEJIAxBAWohDCANQX9qIg0NAAsLIAhBAWohCCAAIAFqIQAgBkEBaiIGIAJHDQALCyACIAFsCwsvAQBBgIAECycBAAAAAgAAAAMAAAAQAAEAIAABAAQAAAAAAAAAAAAAAHJlbmRlcgAAXgRuYW1lAAwLbW9kdWxlLndhc20BKQUACl9fZndfZW50cnkBBGluaXQCBnVwZGF0ZQMEZHJhdwQGcmVuZGVyBxIBAA9fX3N0YWNrX3BvaW50ZXIJCgEABy5yb2RhdGEAdglwcm9kdWNlcnMBDHByb2Nlc3NlZC1ieQEFY2xhbmdWMjIuMS44IChodHRwczovL2dpdGh1Yi5jb20vbGx2bS9sbHZtLXByb2plY3QgY2E3OTMzZTQ3ZDNhMzQ1MWQ4MWU3MmFjMTc0ZGNiNWFhMjhiNTlkMSkAlAEPdGFyZ2V0X2ZlYXR1cmVzCCsLYnVsay1tZW1vcnkrD2J1bGstbWVtb3J5LW9wdCsWY2FsbC1pbmRpcmVjdC1vdmVybG9uZysKbXVsdGl2YWx1ZSsPbXV0YWJsZS1nbG9iYWxzKxNub250cmFwcGluZy1mcHRvaW50Kw9yZWZlcmVuY2UtdHlwZXMrCHNpZ24tZXh0";
+
+/** Portable base64 → bytes (no atob/Buffer dependency; runs in Node + browser). */
+function b64ToBytes(s: string): Uint8Array {
+  const table =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const lut = new Int16Array(256).fill(-1);
+  for (let i = 0; i < table.length; i++) lut[table.charCodeAt(i)] = i;
+  const clean = s.replace(/[^A-Za-z0-9+/]/g, "");
+  const out = new Uint8Array((clean.length * 3) >> 2);
+  let bits = 0;
+  let nbits = 0;
+  let o = 0;
+  for (let i = 0; i < clean.length; i++) {
+    const v = lut[clean.charCodeAt(i)];
+    if (v < 0) continue;
+    bits = (bits << 6) | v;
+    nbits += 6;
+    if (nbits >= 8) {
+      nbits -= 8;
+      out[o++] = (bits >> nbits) & 0xff;
+    }
+  }
+  return out;
+}
+
+/**
  * Seed version. Bump this when the bundled default content changes so existing
  * users (whose SD is persisted in IndexedDB) get the updated demos re-seeded.
  */
-export const SEED_VERSION = 2;
+export const SEED_VERSION = 3;
 
 /** Seed an SD card with the bundled demo games and default system files. */
 export async function seedMockContent(sd: MemorySDCard): Promise<void> {
@@ -346,6 +405,12 @@ export async function seedMockContent(sd: MemorySDCard): Promise<void> {
   sd.mkdirSync("/games/snake", true);
   sd.writeFileSync("/games/snake/main.lua", SNAKE_LUA);
   sd.writeFileSync("/games/snake/meta.lua", 'return { title = "Snake" }\n');
+  // A C-accelerated demo: a Lua game + its compiled native helper on the SD.
+  sd.mkdirSync("/games/ripple", true);
+  sd.writeFileSync("/games/ripple/main.lua", RIPPLE_LUA);
+  sd.writeFileSync("/games/ripple/meta.lua", 'return { title = "Ripple (C)" }\n');
+  sd.writeFileSync("/games/ripple/game.json", RIPPLE_GAME_JSON);
+  sd.writeFileSync("/games/ripple/ripple.fwmod", b64ToBytes(RIPPLE_FWMOD_B64));
   sd.mkdirSync("/system", true);
   sd.writeFileSync(
     "/system/settings.json",
