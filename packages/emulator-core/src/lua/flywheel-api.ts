@@ -99,9 +99,15 @@ export function createFlywheelApi(
         gfx.circle(n(x), n(y), n(r), onFlag(on)),
       circfill: (x: unknown, y: unknown, r: unknown, on?: unknown) =>
         gfx.circleFill(n(x), n(y), n(r), onFlag(on)),
-      print: (text: unknown, x: unknown, y: unknown, on?: unknown) =>
-        gfx.print(String(text ?? ""), n(x), n(y), onFlag(on)),
-      text_width: (text: unknown): number => gfx.textWidth(String(text ?? "")),
+      print: (
+        text: unknown,
+        x: unknown,
+        y: unknown,
+        on?: unknown,
+        scale?: unknown,
+      ) => gfx.print(String(text ?? ""), n(x), n(y), onFlag(on), n(scale)),
+      text_width: (text: unknown, scale?: unknown): number =>
+        gfx.textWidth(String(text ?? ""), n(scale)),
       // Draw a w×h, 1-byte-per-pixel native buffer at (x,y): a nonzero byte is
       // an "on" (dark) pixel. The canonical "C fills a framebuffer, HAL blits
       // it" path — one bulk read of the module's memory, then a JS pixel loop.

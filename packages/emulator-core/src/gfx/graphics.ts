@@ -146,52 +146,61 @@ export class Graphics {
     this.display.blit(bitmap, Math.round(x), Math.round(y), options);
   }
 
-  /** Draw one glyph; returns the x advance. Unknown glyphs render as a box. */
-  drawChar(ch: string, x: number, y: number, on = true): number {
+  /**
+   * Draw one glyph; returns the x advance. Unknown glyphs render as a box.
+   * `scale` (a positive integer, clamped) magnifies each font pixel into a
+   * scale×scale block, so text can be drawn 2x, 3x, … larger.
+   */
+  drawChar(ch: string, x: number, y: number, on = true, scale = 1): number {
     x = Math.round(x);
     y = Math.round(y);
+    const s = intScale(scale);
     const glyph = FONT_5X7[ch] ?? FONT_5X7["�"];
     if (glyph) {
       for (let row = 0; row < glyph.length; row++) {
         const line = glyph[row];
         for (let col = 0; col < line.length; col++) {
           if (line[col] !== " " && line[col] !== ".") {
-            this.display.setPixel(x + col, y + row, on);
+            if (s === 1) this.display.setPixel(x + col, y + row, on);
+            else this.display.fillRect(x + col * s, y + row * s, s, s, on);
           }
         }
       }
     }
-    return GLYPH_ADVANCE;
+    return GLYPH_ADVANCE * s;
   }
 
   /**
-   * Draw text starting at (x, y). Handles "\n". Returns the cursor position
-   * after the last character.
+   * Draw text starting at (x, y). Handles "\n". `scale` magnifies the text by a
+   * positive integer factor (line height and advance scale with it). Returns the
+   * cursor position after the last character.
    */
   print(
     text: string,
     x: number,
     y: number,
     on = true,
+    scale = 1,
   ): { x: number; y: number } {
+    const s = intScale(scale);
     const startX = Math.round(x);
     let cx = startX;
     let cy = Math.round(y);
     for (const ch of text) {
       if (ch === "\n") {
         cx = startX;
-        cy += LINE_HEIGHT;
+        cy += LINE_HEIGHT * s;
         continue;
       }
-      this.drawChar(ch, cx, cy, on);
-      cx += GLYPH_ADVANCE;
+      this.drawChar(ch, cx, cy, on, s);
+      cx += GLYPH_ADVANCE * s;
     }
     return { x: cx, y: cy };
   }
 
-  /** Pixel width of a single line of text (no newline handling). */
-  textWidth(text: string): number {
-    return text.length * GLYPH_ADVANCE;
+  /** Pixel width of a single line of text at `scale` (no newline handling). */
+  textWidth(text: string, scale = 1): number {
+    return text.length * GLYPH_ADVANCE * intScale(scale);
   }
 
   private eightfold(
@@ -211,6 +220,12 @@ export class Graphics {
     d.setPixel(cx + x, cy - y, on);
     d.setPixel(cx + y, cy - x, on);
   }
+}
+
+/** Clamp a text scale to a positive integer (floor; minimum 1). */
+function intScale(scale: number): number {
+  const s = Math.floor(scale);
+  return s >= 1 ? s : 1;
 }
 
 export { GLYPH_WIDTH, GLYPH_HEIGHT, GLYPH_ADVANCE, LINE_HEIGHT };

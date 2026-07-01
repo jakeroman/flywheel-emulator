@@ -71,7 +71,7 @@ export interface BiosEvents {
   error: string;
 }
 
-const FIRMWARE_VERSION = "0.2.0";
+const FIRMWARE_VERSION = "0.3.0";
 const BOOT_SPLASH_MS = 1600;
 const COUNTDOWN_MS = 3000;
 const IDLE_SLEEP_MS = 15000;
@@ -576,8 +576,8 @@ export class Bios {
   private drawBoot(): void {
     const g = this.gfx;
     g.clear();
-    centerText(g, "FLYWHEEL", 86);
-    centerText(g, `FW-01  SOLAR  v${FIRMWARE_VERSION}`, 104);
+    centerText(g, "FLYWHEEL", 72, 2); // 2x boot title
+    centerText(g, `FW-01  SOLAR  v${FIRMWARE_VERSION}`, 100);
 
     const report = this.chargeReport;
     if (report && report.gainedLevel > 0.005) {
@@ -703,8 +703,8 @@ function estPlaytimeMin(gainedLevel: number): number {
   return Math.round((gainedMah / activeDrawMa) * 60);
 }
 
-function centerText(g: Graphics, text: string, y: number): void {
-  g.print(text, Math.round((W - g.textWidth(text)) / 2), y, true);
+function centerText(g: Graphics, text: string, y: number, scale = 1): void {
+  g.print(text, Math.round((W - g.textWidth(text, scale)) / 2), y, true, scale);
 }
 
 function drawIcon(
