@@ -14,6 +14,9 @@
   height: 100%;
   width: 100%;
 }
+.fw-editor__cm .cm-scroller {
+  font-size: var(--fw-editor-fs, 12px);
+}
 .fw-editor__cm .cm-editor.cm-focused {
   outline: none;
 }

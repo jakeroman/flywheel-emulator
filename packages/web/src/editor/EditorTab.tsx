@@ -34,6 +34,28 @@ function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+const FONT_MIN = 10;
+const FONT_MAX = 24;
+const FONT_KEY = "fw-editor-fs";
+
+function readStoredFontSize(): number {
+  const s =
+    typeof localStorage !== "undefined"
+      ? Number(localStorage.getItem(FONT_KEY))
+      : NaN;
+  return Number.isFinite(s) && s >= FONT_MIN && s <= FONT_MAX ? s : 12;
+}
+
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, v));
+}
+
+/** The directory part of an absolute path ("/games/a/x.lua" → "/games/a"). */
+function dirOf(path: string): string {
+  const i = path.lastIndexOf("/");
+  return i > 0 ? path.slice(0, i) : "/";
+}
+
 /**
  * The Phase 3 dev loop: pick a file from the SD card, edit it, and Save (or
  * Ctrl-S). With "run on save" on, saving a .lua file hot-reloads it on the
@@ -49,6 +71,11 @@ export function EditorTab() {
   const [dirty, setDirty] = useState(false);
   const [binarySize, setBinarySize] = useState<number | null>(null); // non-null = binary
   const [runOnSave, setRunOnSave] = useState(false);
+  const [fontSize, setFontSize] = useState<number>(readStoredFontSize);
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const [lastDir, setLastDir] = useState("/games");
   const consoleRef = useRef<HTMLDivElement>(null);
 
   const binary = binarySize !== null;
@@ -58,6 +85,26 @@ export function EditorTab() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [bios.logs, bios.error]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(FONT_KEY, String(fontSize));
+    } catch {
+      // storage unavailable — keep the in-session size
+    }
+  }, [fontSize]);
+
+  // Rows whose folder (or any ancestor) is collapsed are hidden.
+  const visible = files.filter(
+    (e) => ![...collapsed].some((dir) => e.path.startsWith(dir + "/")),
+  );
+  const toggleDir = (path: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+
   const open = useCallback(
     (path: string) => {
       if (path === openPath) return; // already open
@@ -65,6 +112,7 @@ export function EditorTab() {
       try {
         const bytes = device.sd.readFileSync(path);
         setOpenPath(path);
+        setLastDir(dirOf(path));
         setDirty(false);
         if (isBinary(bytes)) {
           setBinarySize(bytes.length);
@@ -98,8 +146,12 @@ export function EditorTab() {
     void bios.launchScript(openPath);
   }, [openPath, binary, dirty, content, device, bios]);
 
+  // Default new files/folders into the folder you're working in (the open
+  // file's dir, else the last one you touched) instead of always /games/.
+  const workingDir = openPath ? dirOf(openPath) : lastDir;
+
   const newFile = () => {
-    const raw = window.prompt("New file path", "/games/");
+    const raw = window.prompt("New file path", `${workingDir}/`);
     if (!raw) return;
     const path = raw.trim();
     if (!path.startsWith("/") || path.endsWith("/")) {
@@ -121,7 +173,7 @@ export function EditorTab() {
   };
 
   const newFolder = () => {
-    const raw = window.prompt("New folder path", "/games/");
+    const raw = window.prompt("New folder path", `${workingDir}/`);
     if (!raw) return;
     const path = raw.trim().replace(/\/+$/, "");
     if (!path.startsWith("/")) {
@@ -134,6 +186,7 @@ export function EditorTab() {
     }
     try {
       device.sd.mkdirSync(path, true);
+      setLastDir(path);
     } catch (e) {
       window.alert(`Could not create: ${errMsg(e)}`);
     }
@@ -181,6 +234,28 @@ export function EditorTab() {
           />
           run on save
         </label>
+        <div className="fw-edit__fs" role="group" aria-label="Editor font size">
+          <button
+            type="button"
+            className="fw-minibtn"
+            onClick={() => setFontSize((f) => clamp(f - 1, FONT_MIN, FONT_MAX))}
+            disabled={fontSize <= FONT_MIN}
+            aria-label="Smaller font"
+            title="Smaller font"
+          >
+            A−
+          </button>
+          <button
+            type="button"
+            className="fw-minibtn"
+            onClick={() => setFontSize((f) => clamp(f + 1, FONT_MIN, FONT_MAX))}
+            disabled={fontSize >= FONT_MAX}
+            aria-label="Larger font"
+            title="Larger font"
+          >
+            A+
+          </button>
+        </div>
       </div>
 
       <div className="fw-edit__body">
@@ -194,16 +269,25 @@ export function EditorTab() {
             </button>
           </div>
           <ul className="fw-tree">
-            {files.map((e) => (
+            {visible.map((e) => (
               <li
                 key={e.path}
                 className={`fw-tree__row${e.path === openPath ? " is-open" : ""}`}
                 style={{ paddingLeft: `${e.depth * 12 + 4}px` }}
               >
                 {e.type === "dir" ? (
-                  <span className="fw-tree__glyph" aria-hidden="true">
-                    ▸
-                  </span>
+                  <button
+                    type="button"
+                    className="fw-tree__dir"
+                    title={e.path}
+                    aria-expanded={!collapsed.has(e.path)}
+                    onClick={() => toggleDir(e.path)}
+                  >
+                    <span className="fw-tree__glyph" aria-hidden="true">
+                      {collapsed.has(e.path) ? "▸" : "▾"}
+                    </span>
+                    <span className="fw-tree__name">{e.name}</span>
+                  </button>
                 ) : (
                   <button
                     type="button"
@@ -213,9 +297,6 @@ export function EditorTab() {
                   >
                     {e.name}
                   </button>
-                )}
-                {e.type === "dir" && (
-                  <span className="fw-tree__name">{e.name}</span>
                 )}
                 <button
                   type="button"
@@ -251,6 +332,7 @@ export function EditorTab() {
             >
               <CodeEditor
                 value={content}
+                fontSize={fontSize}
                 onChange={(next) => {
                   setContent(next);
                   setDirty(true);

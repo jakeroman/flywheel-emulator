@@ -1,7 +1,8 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type CSSProperties } from "react";
 import { basicSetup } from "codemirror";
-import { EditorState } from "@codemirror/state";
+import { EditorState, Prec } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
+import { indentWithTab } from "@codemirror/commands";
 import { StreamLanguage } from "@codemirror/language";
 import { lua } from "@codemirror/legacy-modes/mode/lua";
 import { oneDark } from "@codemirror/theme-one-dark";
@@ -16,11 +17,13 @@ export function CodeEditor({
   value,
   onChange,
   onSave,
+  fontSize = 12,
   readOnly = false,
 }: {
   value: string;
   onChange: (next: string) => void;
   onSave?: () => void;
+  fontSize?: number;
   readOnly?: boolean;
 }) {
   const host = useRef<HTMLDivElement>(null);
@@ -47,18 +50,33 @@ export function CodeEditor({
               return true;
             },
           },
+          // Tab / Shift-Tab indent (instead of moving focus) — expected in a
+          // code editor.
+          indentWithTab,
         ]),
+        // Escape blurs the editor so keyboard users can Tab out (low priority,
+        // so it yields to the autocomplete popup's own Escape when it's open).
+        Prec.low(
+          keymap.of([
+            {
+              key: "Escape",
+              run: (v) => {
+                v.contentDOM.blur();
+                return true;
+              },
+            },
+          ]),
+        ),
         EditorView.editable.of(!readOnly),
         EditorState.readOnly.of(readOnly),
         EditorView.updateListener.of((u) => {
           if (u.docChanged) onChangeRef.current(u.state.doc.toString());
         }),
+        // Font size comes from the --fw-editor-fs CSS var (set by EditorTab) so
+        // it can change without reconfiguring the editor; family stays here.
         EditorView.theme({
           "&": { height: "100%" },
-          ".cm-scroller": {
-            fontFamily: "var(--fw-font-mono)",
-            fontSize: "12px",
-          },
+          ".cm-scroller": { fontFamily: "var(--fw-font-mono)" },
         }),
       ],
     });
@@ -83,5 +101,16 @@ export function CodeEditor({
     }
   }, [value]);
 
-  return <div ref={host} className="fw-editor__cm" />;
+  // Re-measure after a font-size change so line heights/gutters stay aligned.
+  useEffect(() => {
+    view.current?.requestMeasure();
+  }, [fontSize]);
+
+  return (
+    <div
+      ref={host}
+      className="fw-editor__cm"
+      style={{ "--fw-editor-fs": `${fontSize}px` } as CSSProperties}
+    />
+  );
 }
