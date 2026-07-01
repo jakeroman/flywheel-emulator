@@ -21,18 +21,21 @@ import type { FlywheelDevice } from "../../hal/device.js";
 import { Graphics } from "../../gfx/graphics.js";
 import { Arch, decodeFwmod, type FwModule } from "../../fwmod/index.js";
 import type {
-  ModuleRuntime,
+  AcceleratorRuntime,
   ModuleRuntimeCallbacks,
   RuntimeStatus,
 } from "../module-runtime.js";
 import { ArenaMem } from "../mem-access.js";
+import { readBytesAt, readCStringAt, writeBytesAt } from "../wasm-memory.js";
 import { callHalOp, HAL_OP_NAMES, type HalContext } from "../hal-ops.js";
 import { XtensaCpu, type OutOfArena } from "./xtensa-cpu.js";
 
 const SENTINEL_BASE = 0x3ff00000; // host fn-pointer sentinels (outside any arena)
 const HOST_RETURN = 0x3ffffffc; // a top-level call returns here
-const ARENA_HEADROOM = 0x10000; // 64 KiB for the api struct + stack
+const HEAP_BYTES = 0x20000; // 128 KiB of host-allocated accelerator scratch
+const STACK_BYTES = 0x4000; // 16 KiB descending call0 stack
 const STRUCT_BYTES = 12 + HAL_OP_NAMES.length * 4; // 3 data words + fn ptrs
+const MAX_EXPORTS = 256; // cap when walking the exports array
 const BUDGET = 2_000_000;
 
 const align16 = (n: number): number => (n + 15) & ~15;
@@ -43,7 +46,7 @@ const f32Bits = (x: number): number => {
   return new Int32Array(f.buffer)[0];
 };
 
-export class XtensaModuleRuntime implements ModuleRuntime {
+export class XtensaModuleRuntime implements AcceleratorRuntime {
   private readonly gfx: Graphics;
   private _status: RuntimeStatus = "idle";
   private timeMs = 0;
@@ -53,6 +56,14 @@ export class XtensaModuleRuntime implements ModuleRuntime {
   private handler: ((addr: number) => OutOfArena) | null = null;
   private sp = 0;
   private fns: { init: number; update: number; draw: number } | null = null;
+
+  // Accelerator surface: the arena + its guest base, a name→code-address export
+  // map, and a bump allocator over the arena's heap region (below the stack).
+  private arena: Uint8Array | null = null;
+  private base = 0;
+  private exportMap = new Map<string, number>();
+  private heapPtr = 0;
+  private heapEnd = 0;
 
   constructor(
     private readonly device: FlywheelDevice,
@@ -94,7 +105,10 @@ export class XtensaModuleRuntime implements ModuleRuntime {
     try {
       const base = module.loadAddr >>> 0;
       const apiOff = align16(module.codeSize + module.bssSize);
-      const arena = new Uint8Array(apiOff + STRUCT_BYTES + ARENA_HEADROOM);
+      // Layout: payload | api struct | heap (host scratch, grows up) | stack
+      // (grows down from the top). Heap and stack share the headroom.
+      const heapBase = align16(apiOff + STRUCT_BYTES);
+      const arena = new Uint8Array(heapBase + HEAP_BYTES + STACK_BYTES);
       arena.set(module.payload, 0);
 
       // The arena must sit entirely below the host sentinel region (and not wrap
@@ -116,6 +130,10 @@ export class XtensaModuleRuntime implements ModuleRuntime {
       }
       const apiAddr = (base + apiOff) >>> 0;
       this.sp = (base + arena.length - 16) & ~15;
+      this.arena = arena;
+      this.base = base;
+      this.heapPtr = (base + heapBase) >>> 0;
+      this.heapEnd = (base + heapBase + HEAP_BYTES) >>> 0;
 
       const cpu = new XtensaCpu(arena, base);
       const hal: HalContext = {
@@ -147,8 +165,8 @@ export class XtensaModuleRuntime implements ModuleRuntime {
       this.cpu = cpu;
       this.handler = handler;
 
-      // fw_main(api) → guest pointer to fw_module_t { init, update, draw }.
-      const modPtr = this.callFn((base + module.entryOffset) >>> 0, apiAddr) >>> 0;
+      // fw_main(api) → guest pointer to fw_module_t {init, update, draw, exports}.
+      const modPtr = this.callFn((base + module.entryOffset) >>> 0, [apiAddr]) >>> 0;
       if (seq !== this.loadSeq) return false;
       if (modPtr === 0) throw new Error("fw_main returned NULL (init failed)");
       this.fns = {
@@ -156,10 +174,11 @@ export class XtensaModuleRuntime implements ModuleRuntime {
         update: cpu.load32(modPtr + 4) >>> 0,
         draw: cpu.load32(modPtr + 8) >>> 0,
       };
+      this.exportMap = this.readExports(cpu, cpu.load32(modPtr + 12) >>> 0);
 
       this.setStatus("running");
       this.gfx.clear();
-      this.callFn(this.fns.init, 0);
+      this.callFn(this.fns.init, []);
       return this._status === "running";
     } catch (e) {
       if (seq === this.loadSeq) this.fail(e);
@@ -172,7 +191,7 @@ export class XtensaModuleRuntime implements ModuleRuntime {
     this.timeMs += dtSeconds * 1000;
     try {
       // call0 soft-float: a float arg passes in a2 as its raw IEEE-754 bits.
-      this.callFn(this.fns.update, f32Bits(dtSeconds));
+      this.callFn(this.fns.update, [f32Bits(dtSeconds)]);
     } catch (e) {
       this.fail(e);
     }
@@ -181,10 +200,44 @@ export class XtensaModuleRuntime implements ModuleRuntime {
   draw(): void {
     if (this._status !== "running" || !this.fns) return;
     try {
-      this.callFn(this.fns.draw, 0);
+      this.callFn(this.fns.draw, []);
     } catch (e) {
       this.fail(e);
     }
+  }
+
+  // ---- accelerator surface (AcceleratorRuntime) ----
+
+  get exports(): readonly string[] {
+    return [...this.exportMap.keys()];
+  }
+
+  alloc(nbytes: number): number {
+    const n = (Math.max(0, nbytes | 0) + 15) & ~15;
+    const ptr = this.heapPtr >>> 0;
+    if (ptr + n > this.heapEnd) {
+      throw new Error("xtensa: accelerator scratch exhausted");
+    }
+    this.heapPtr = (ptr + n) >>> 0;
+    return ptr;
+  }
+
+  read(ptr: number, len: number): Uint8Array {
+    if (!this.arena) return new Uint8Array(0);
+    return readBytesAt(this.arena, (ptr >>> 0) - this.base, len);
+  }
+
+  write(ptr: number, bytes: Uint8Array): void {
+    if (this.arena) {
+      writeBytesAt(this.arena, (ptr >>> 0) - this.base, bytes, bytes.length);
+    }
+  }
+
+  callExport(name: string, args: readonly number[] = []): number {
+    const addr = this.exportMap.get(name);
+    if (addr === undefined) throw new Error(`xtensa: no export "${name}"`);
+    if (this._status !== "running") throw new Error("xtensa: module not running");
+    return this.callFn(addr, args);
   }
 
   dispose(): void {
@@ -193,24 +246,55 @@ export class XtensaModuleRuntime implements ModuleRuntime {
     if (this._status !== "idle") this.setStatus("idle");
   }
 
-  /** Enter a top-level guest function (fw_main/init/update/draw) with one arg in
-   *  a2, a fresh stack, and a0 = HOST_RETURN; run to the host-return. Returns a2. */
-  private callFn(addr: number, arg: number): number {
+  /** Enter a top-level guest function (fw_main/init/update/draw or an export)
+   *  with up to four args in a2..a5 (call0), a fresh stack, and a0 = HOST_RETURN;
+   *  run to the host-return. Returns a2. */
+  private callFn(addr: number, args: readonly number[]): number {
     const cpu = this.cpu;
     const handler = this.handler;
     if (!cpu || !handler) throw new Error("xtensa: no module loaded");
     cpu.ar[0] = HOST_RETURN | 0;
     cpu.ar[1] = this.sp;
-    cpu.ar[2] = arg | 0;
+    cpu.ar[2] = (args[0] ?? 0) | 0;
+    cpu.ar[3] = (args[1] ?? 0) | 0;
+    cpu.ar[4] = (args[2] ?? 0) | 0;
+    cpu.ar[5] = (args[3] ?? 0) | 0;
     cpu.pc = addr >>> 0;
     cpu.run(handler, BUDGET);
     return cpu.ar[2];
+  }
+
+  /** Walk a {name_ptr, fn_addr}[] array (NUL-name terminated) into a name→address
+   *  map, tolerating an absent/out-of-arena pointer. */
+  private readExports(cpu: XtensaCpu, arrPtr: number): Map<string, number> {
+    const map = new Map<string, number>();
+    if (!arrPtr) return map;
+    let p = arrPtr >>> 0;
+    for (let i = 0; i < MAX_EXPORTS; i++) {
+      let namePtr: number;
+      let fnAddr: number;
+      try {
+        namePtr = cpu.load32(p) >>> 0;
+        fnAddr = cpu.load32(p + 4) >>> 0;
+      } catch {
+        break; // walked off the arena
+      }
+      if (namePtr === 0) break; // {NULL,NULL} terminator
+      const name = this.arena ? readCStringAt(this.arena, namePtr - this.base) : "";
+      if (name) map.set(name, fnAddr);
+      p = (p + 8) >>> 0;
+    }
+    return map;
   }
 
   private teardown(): void {
     this.cpu = null;
     this.handler = null;
     this.fns = null;
+    this.arena = null;
+    this.exportMap = new Map();
+    this.heapPtr = 0;
+    this.heapEnd = 0;
     if (this._status === "running") this.setStatus("idle");
   }
 

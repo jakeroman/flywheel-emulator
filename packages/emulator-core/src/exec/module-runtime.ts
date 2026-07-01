@@ -32,3 +32,32 @@ export interface ModuleRuntime {
   /** Release all resources; safe to call more than once. */
   dispose(): void | Promise<void>;
 }
+
+/**
+ * A native backend (wasm32 / Xtensa) that also exposes the module's accelerator
+ * exports — named C functions a Lua game calls for hot-path work, plus a way to
+ * hand them buffers. `alloc` reserves host-owned scratch *inside the module's own
+ * memory* and returns a guest pointer; the module reads/writes it directly, and
+ * the host reads it back with `read`. On real hardware that pointer is bare RAM
+ * shared by Lua and the module; in the emulator it's a window into the wasm
+ * linear memory / Xtensa arena — the same Lua code works against both.
+ */
+export interface AcceleratorRuntime extends ModuleRuntime {
+  /** Names of the module's exported accelerator functions (may be empty). */
+  readonly exports: readonly string[];
+  /** Reserve `nbytes` of zeroed scratch in the module's memory; returns a guest
+   *  pointer. Throws if the module's scratch region is exhausted. */
+  alloc(nbytes: number): number;
+  /** Copy `len` bytes out of the module's memory at a guest pointer. */
+  read(ptr: number, len: number): Uint8Array;
+  /** Copy `bytes` into the module's memory at a guest pointer. */
+  write(ptr: number, bytes: Uint8Array): void;
+  /** Call an export by name with up to four int32 args (padded with 0); returns
+   *  its int32 result. Throws if the name isn't exported. */
+  callExport(name: string, args?: readonly number[]): number;
+}
+
+/** Whether a runtime exposes the accelerator (export/buffer) surface. */
+export function isAccelerator(rt: ModuleRuntime): rt is AcceleratorRuntime {
+  return "callExport" in rt && typeof (rt as AcceleratorRuntime).alloc === "function";
+}

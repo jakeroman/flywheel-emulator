@@ -79,13 +79,33 @@ typedef struct fw_api {
 } fw_api_t;
 
 /*
+ * Accelerator exports (optional). Beyond the game lifecycle, a module may expose
+ * named functions that a Lua game (or another module) calls directly through the
+ * bridge — the "C-accelerated helper" model. Every export shares one uniform
+ * signature: up to four 32-bit args, one 32-bit result. Pass a buffer as a
+ * pointer + length (the bridge hands out a region of the module's own memory
+ * that both sides read/write — a bare pointer on real hardware, a window into
+ * the wasm/Xtensa sandbox in the emulator); pass a float as its raw bits.
+ */
+typedef int32_t (*fw_fn_t)(int32_t a0, int32_t a1, int32_t a2, int32_t a3);
+
+typedef struct fw_export {
+    const char *name; /* NULL terminates the array */
+    fw_fn_t fn;
+} fw_export_t;
+
+/*
  * Module callbacks, mirroring the Lua _init/_update/_draw lifecycle. The module
  * returns a pointer to a (typically static) instance of this from fw_main.
+ * `exports` is optional: NULL for a plain game, or a {NULL,NULL}-terminated
+ * array of named accelerator functions. (Appending this field is backward
+ * compatible; the host reads it only when present and bounds-checks the pointer.)
  */
 typedef struct fw_module {
     void (*init)(void);
     void (*update)(float dt_seconds);
     void (*draw)(void);
+    const fw_export_t *exports;
 } fw_module_t;
 
 /*

@@ -22,17 +22,19 @@ import type { FlywheelDevice } from "../hal/device.js";
 import { Graphics } from "../gfx/graphics.js";
 import { Arch, decodeFwmod, type FwModule } from "../fwmod/index.js";
 import type {
-  ModuleRuntime,
+  AcceleratorRuntime,
   ModuleRuntimeCallbacks,
   RuntimeStatus,
 } from "./module-runtime.js";
 import { createWasmEnv, type WasmEnvContext } from "./wasm-imports.js";
+import { readBytes, readCString, writeBytes } from "./wasm-memory.js";
 
 type WasmFn = (...args: number[]) => number | void;
 
-const MODULE_STRUCT_BYTES = 12; // three i32: init, update, draw
+const MODULE_STRUCT_BYTES = 16; // four i32: init, update, draw, exports
+const MAX_EXPORTS = 256; // a sane cap when walking the exports array
 
-export class WasmModuleRuntime implements ModuleRuntime {
+export class WasmModuleRuntime implements AcceleratorRuntime {
   private readonly gfx: Graphics;
   private _status: RuntimeStatus = "idle";
   private timeMs = 0;
@@ -43,6 +45,14 @@ export class WasmModuleRuntime implements ModuleRuntime {
   // import closures alive for the module's lifetime; no separate handle needed.
   private updateFn: WasmFn | null = null;
   private drawFn: WasmFn | null = null;
+
+  // Accelerator surface: the exported memory + table, a name→table-index map of
+  // exports, and a bump pointer for host-allocated scratch (grown above the
+  // module's initial memory so it can't collide with its data/stack).
+  private memory: WebAssembly.Memory | null = null;
+  private table: WebAssembly.Table | null = null;
+  private exportMap = new Map<string, number>();
+  private heapPtr = 0;
 
   constructor(
     private readonly device: FlywheelDevice,
@@ -131,6 +141,12 @@ export class WasmModuleRuntime implements ModuleRuntime {
       this.updateFn = tableFn(table, view.getUint32(ptr + 4, true));
       this.drawFn = tableFn(table, view.getUint32(ptr + 8, true));
 
+      // Accelerator exports (optional 4th struct field) + scratch allocator.
+      this.memory = memory;
+      this.table = table;
+      this.exportMap = readExports(memory, view.getUint32(ptr + 12, true) >>> 0);
+      this.heapPtr = memory.buffer.byteLength; // scratch grows above initial mem
+
       this.setStatus("running");
       // Start on a clean framebuffer (parity with LuaRuntime).
       this.gfx.clear();
@@ -168,9 +184,50 @@ export class WasmModuleRuntime implements ModuleRuntime {
     if (this._status !== "idle") this.setStatus("idle");
   }
 
+  // ---- accelerator surface (AcceleratorRuntime) ----
+
+  get exports(): readonly string[] {
+    return [...this.exportMap.keys()];
+  }
+
+  alloc(nbytes: number): number {
+    if (!this.memory) throw new Error("wasm: no module loaded");
+    const n = (Math.max(0, nbytes | 0) + 15) & ~15;
+    const ptr = this.heapPtr;
+    const need = ptr + n;
+    const have = this.memory.buffer.byteLength;
+    if (need > have) this.memory.grow(Math.ceil((need - have) / 65536));
+    this.heapPtr = need; // monotonic; each region is handed out at most once
+    return ptr;
+  }
+
+  read(ptr: number, len: number): Uint8Array {
+    if (!this.memory) return new Uint8Array(0);
+    return readBytes(this.memory, ptr, len);
+  }
+
+  write(ptr: number, bytes: Uint8Array): void {
+    if (this.memory) writeBytes(this.memory, ptr, bytes, bytes.length);
+  }
+
+  callExport(name: string, args: readonly number[] = []): number {
+    const idx = this.exportMap.get(name);
+    if (idx === undefined) throw new Error(`wasm: no export "${name}"`);
+    const fn = this.table && tableFn(this.table, idx);
+    if (!fn) throw new Error(`wasm: export "${name}" is not callable`);
+    // Every export is (i32,i32,i32,i32)->i32; pad missing args with 0.
+    return (
+      (fn(args[0] | 0, args[1] | 0, args[2] | 0, args[3] | 0) as number) | 0
+    );
+  }
+
   private teardown(): void {
     this.updateFn = null;
     this.drawFn = null;
+    this.memory = null;
+    this.table = null;
+    this.exportMap = new Map();
+    this.heapPtr = 0;
     // Route through setStatus so observers (e.g. the BIOS onStatus) see idle,
     // matching LuaRuntime; setStatus no-ops when the status is unchanged.
     if (this._status === "running") this.setStatus("idle");
@@ -196,4 +253,25 @@ function tableFn(table: WebAssembly.Table, index: number): WasmFn | null {
   if (index < 0 || index >= table.length) return null;
   const fn = table.get(index);
   return typeof fn === "function" ? (fn as WasmFn) : null;
+}
+
+/** Walk a {name_ptr, fn_index}[] array (NUL-name terminated) at `arrPtr` into a
+ *  name→table-index map. Tolerates a bogus/absent pointer (returns empty). */
+function readExports(
+  memory: WebAssembly.Memory,
+  arrPtr: number,
+): Map<string, number> {
+  const map = new Map<string, number>();
+  if (!arrPtr) return map;
+  const view = new DataView(memory.buffer);
+  let p = arrPtr >>> 0;
+  for (let i = 0; i < MAX_EXPORTS; i++) {
+    if (p + 8 > memory.buffer.byteLength) break;
+    const namePtr = view.getUint32(p, true) >>> 0;
+    if (namePtr === 0) break; // {NULL,NULL} terminator
+    const name = readCString(memory, namePtr);
+    if (name) map.set(name, view.getUint32(p + 4, true) >>> 0);
+    p += 8;
+  }
+  return map;
 }
