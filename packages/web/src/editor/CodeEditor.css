@@ -1,4 +1,8 @@
 .fw-editor__cm {
+  /* Fill the editor pane: grow to the flex row's full width (min-width:0 lets it
+     shrink below the CodeMirror content width instead of sizing to it). */
+  flex: 1;
+  min-width: 0;
   height: 100%;
   min-height: 0;
   overflow: hidden;
@@ -8,6 +12,7 @@
 
 .fw-editor__cm .cm-editor {
   height: 100%;
+  width: 100%;
 }
 .fw-editor__cm .cm-editor.cm-focused {
   outline: none;
