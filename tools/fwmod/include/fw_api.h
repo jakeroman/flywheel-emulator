@@ -40,8 +40,13 @@ typedef enum {
 
 /*
  * The host jump table. The pointer is handed to the module at entry and is
- * valid for the module's lifetime. `on` selects dark ink (true) vs the light
- * reflective ground (false), matching the display's "on = dark pixel" model.
+ * valid for the module's lifetime.
+ *
+ * Graphics take a `fill` shade in [0,1]: 0.0f = the light reflective ground,
+ * 1.0f = dark ink, and anything between is a gray shade via an ordered 4x4
+ * Bayer pattern (0.5f = 50% checkerboard). This mirrors the Lua `fw.gfx` `fill`
+ * argument. (The old boolean on-flag is just the extremes: false=0.0f=light,
+ * true=1.0f=dark — so passing 0/1 keeps the original solid behavior.)
  */
 typedef struct fw_api {
     uint32_t abi_version; /* equals FW_ABI_VERSION; the module should check it */
@@ -52,15 +57,15 @@ typedef struct fw_api {
     bool (*btn)(int32_t button);  /* held this frame */
     bool (*btnp)(int32_t button); /* rising edge this frame */
 
-    /* ---- graphics ---- */
-    void (*cls)(bool on);
-    void (*pixel)(int32_t x, int32_t y, bool on);
-    void (*line)(int32_t x0, int32_t y0, int32_t x1, int32_t y1, bool on);
-    void (*rect)(int32_t x, int32_t y, int32_t w, int32_t h, bool on);
-    void (*rectfill)(int32_t x, int32_t y, int32_t w, int32_t h, bool on);
-    void (*circle)(int32_t x, int32_t y, int32_t r, bool on);
-    void (*circfill)(int32_t x, int32_t y, int32_t r, bool on);
-    void (*print)(const char *s, int32_t x, int32_t y, bool on);
+    /* ---- graphics (fill: 0.0 light .. 1.0 dark; gray between) ---- */
+    void (*cls)(float fill);
+    void (*pixel)(int32_t x, int32_t y, float fill);
+    void (*line)(int32_t x0, int32_t y0, int32_t x1, int32_t y1, float fill);
+    void (*rect)(int32_t x, int32_t y, int32_t w, int32_t h, float fill);
+    void (*rectfill)(int32_t x, int32_t y, int32_t w, int32_t h, float fill);
+    void (*circle)(int32_t x, int32_t y, int32_t r, float fill);
+    void (*circfill)(int32_t x, int32_t y, int32_t r, float fill);
+    void (*print)(const char *s, int32_t x, int32_t y, float fill);
     int32_t (*text_width)(const char *s);
 
     /* ---- filesystem (resident SD, synchronous) ---- */
@@ -136,14 +141,14 @@ const fw_module_t *fw_main(const fw_api_t *api);
 
 FW_IMPORT(btn) bool __fwi_btn(int32_t);
 FW_IMPORT(btnp) bool __fwi_btnp(int32_t);
-FW_IMPORT(cls) void __fwi_cls(bool);
-FW_IMPORT(pixel) void __fwi_pixel(int32_t, int32_t, bool);
-FW_IMPORT(line) void __fwi_line(int32_t, int32_t, int32_t, int32_t, bool);
-FW_IMPORT(rect) void __fwi_rect(int32_t, int32_t, int32_t, int32_t, bool);
-FW_IMPORT(rectfill) void __fwi_rectfill(int32_t, int32_t, int32_t, int32_t, bool);
-FW_IMPORT(circle) void __fwi_circle(int32_t, int32_t, int32_t, bool);
-FW_IMPORT(circfill) void __fwi_circfill(int32_t, int32_t, int32_t, bool);
-FW_IMPORT(print) void __fwi_print(const char *, int32_t, int32_t, bool);
+FW_IMPORT(cls) void __fwi_cls(float);
+FW_IMPORT(pixel) void __fwi_pixel(int32_t, int32_t, float);
+FW_IMPORT(line) void __fwi_line(int32_t, int32_t, int32_t, int32_t, float);
+FW_IMPORT(rect) void __fwi_rect(int32_t, int32_t, int32_t, int32_t, float);
+FW_IMPORT(rectfill) void __fwi_rectfill(int32_t, int32_t, int32_t, int32_t, float);
+FW_IMPORT(circle) void __fwi_circle(int32_t, int32_t, int32_t, float);
+FW_IMPORT(circfill) void __fwi_circfill(int32_t, int32_t, int32_t, float);
+FW_IMPORT(print) void __fwi_print(const char *, int32_t, int32_t, float);
 FW_IMPORT(text_width) int32_t __fwi_text_width(const char *);
 FW_IMPORT(fs_read) int32_t __fwi_fs_read(const char *, char *, int32_t);
 FW_IMPORT(fs_write) int32_t __fwi_fs_write(const char *, const char *, int32_t);

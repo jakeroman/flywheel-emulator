@@ -15,7 +15,7 @@ async function bootedWithGames(): Promise<{
   bios: Bios;
 }> {
   const device = new EmulatedFlywheelDevice();
-  await seedMockContent(device.sd); // demo + snake + ripple → 3 games
+  await seedMockContent(device.sd); // demo + snake + ripple + save-demo → 4 games
   const bios = new Bios(device);
   device.powerOn();
   bios.boot();
@@ -51,7 +51,9 @@ describe("scanGames", () => {
     const games = scanGames(sd);
     expect(games.map((g) => g.title).sort()).toEqual([
       "Bounce Demo",
+      "Loop Demo",
       "Ripple (C)",
+      "Save Demo",
       "Snake",
     ]);
     expect(games.every((g) => g.mainPath.endsWith("/main.lua"))).toBe(true);
@@ -117,14 +119,16 @@ describe("Bios", () => {
     expect(s.screen).toBe("menu");
     expect(s.games.map((g) => g.title).sort()).toEqual([
       "Bounce Demo",
+      "Loop Demo",
       "Ripple (C)",
+      "Save Demo",
       "Snake",
     ]);
   });
 
   it("navigates the selector and opens settings", async () => {
     const { device, bios } = await bootedWithGames();
-    const n = bios.snapshot().games.length; // 3 seeded games
+    const n = bios.snapshot().games.length; // seeded games
     expect(bios.snapshot().selectedIndex).toBe(0);
     tap(device, bios, "Down");
     expect(bios.snapshot().selectedIndex).toBe(1);
@@ -160,9 +164,70 @@ describe("Bios", () => {
     void device;
   });
 
+  it("scopes a launched game's fw.save to /saves/<game>", async () => {
+    const { device, bios } = await bootedWithGames();
+    device.sd.mkdirSync("/games/saver", true);
+    device.sd.writeFileSync(
+      "/games/saver/main.lua",
+      `function _init() fw.save.set("hp", 42) end`,
+    );
+    await bios.launchScript("/games/saver/main.lua");
+    expect(bios.snapshot().gameStatus).toBe("running");
+    // The save landed under /saves/<game folder>, not in the game dir.
+    expect(device.sd.existsSync("/saves/saver/save.json")).toBe(true);
+    expect(device.sd.readTextFileSync("/saves/saver/save.json")).toContain(
+      "42",
+    );
+    expect(device.sd.existsSync("/games/saver/save.json")).toBe(false);
+  });
+
+  it("keeps a traversal-y entry path from escaping /saves", async () => {
+    const { device, bios } = await bootedWithGames();
+    device.sd.writeFileSync(
+      "/main.lua",
+      `function _init() fw.save.set("x", 1) end`,
+    );
+    // dirname("/../main.lua") basename is "..": must not resolve to /saves/..
+    // (which normalizes to /). The save must land under /saves, not root.
+    await bios.launchScript("/../main.lua");
+    expect(bios.snapshot().gameStatus).toBe("running");
+    expect(device.sd.existsSync("/save.json")).toBe(false);
+    const underSaves = device.sd
+      .readDirSync("/saves")
+      .some((e) => e.type === "dir" && device.sd.existsSync(`${e.path}/save.json`));
+    expect(underSaves).toBe(true);
+  });
+
+  it("gives folders that sanitize to the same slug separate saves", async () => {
+    const { device, bios } = await bootedWithGames();
+    // "my game" (space) and "my_game" both slug to "my_game"; they must not
+    // share one save.json.
+    for (const [dir, val] of [
+      ["/games/my game", 1],
+      ["/games/my_game", 2],
+    ] as const) {
+      device.sd.mkdirSync(dir, true);
+      device.sd.writeFileSync(
+        `${dir}/main.lua`,
+        `function _init() fw.save.set("v", ${val}) end`,
+      );
+      await bios.launchScript(`${dir}/main.lua`);
+    }
+    // Re-launch the first; it must still read its own value, not the second's.
+    device.sd.writeFileSync(
+      "/games/my game/main.lua",
+      `function _init() fw.log("v=" .. fw.save.get("v", -1)) end`,
+    );
+    const logs: string[] = [];
+    const off = bios.events.on("log", (m) => logs.push(m));
+    await bios.launchScript("/games/my game/main.lua");
+    off();
+    expect(logs).toContain("v=1");
+  });
+
   it("populates the game list when launchScript runs from a powered-off device", async () => {
     const device = new EmulatedFlywheelDevice();
-    await seedMockContent(device.sd); // demo + snake
+    await seedMockContent(device.sd); // seeded games
     const bios = new Bios(device);
     // Device is OFF and not booted; dev-launch a script directly.
     await bios.launchScript("/games/snake/main.lua");

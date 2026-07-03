@@ -422,7 +422,16 @@ export class Bios {
         // Load the game's declared native helpers (each into its own backend by
         // arch) and expose them as fw.native.<name> to the Lua game.
         const native = await this.loadAccelerators(resolved.modules);
-        await this.lua.load(this.device.sd.readTextFileSync(entry), native);
+        // Scope the game's save store to /saves/<id> so fw.save is per-game and
+        // separate from the (distributable, possibly read-only) game directory.
+        // scriptDir is the game's own dir, so `require` resolves sibling modules.
+        const saveDir = saveDirFor(entry);
+        await this.lua.load(
+          this.device.sd.readTextFileSync(entry),
+          native,
+          saveDir,
+          dirname(entry),
+        );
       }
     } catch (e) {
       this.error = e instanceof Error ? e.message : String(e);
@@ -742,4 +751,35 @@ function basename(path: string): string {
 function dirname(path: string): string {
   const i = path.lastIndexOf("/");
   return i > 0 ? path.slice(0, i) : "/";
+}
+
+/**
+ * The save directory for a game, derived from its entry path: the game folder
+ * name becomes a stable save id under /saves. Non-filesystem-safe characters
+ * are replaced so the id is always a single clean SD segment (and can never
+ * traverse). `/games/snake/main.lua` → `/saves/snake`.
+ */
+function saveDirFor(entryPath: string): string {
+  const raw = basename(dirname(entryPath));
+  const slug = raw.replace(/[^A-Za-z0-9._-]/g, "_");
+  // "." and ".." survive the char filter (dots are allowed) but would escape
+  // /saves via path normalization; empty/all-dots are also unusable as an id.
+  const clean = slug !== "" && !/^\.+$/.test(slug);
+  // Keep the pretty "/saves/snake" for a normal folder name. Only when the slug
+  // is lossy (raw had stripped chars) or a fallback do we append a short hash of
+  // the ORIGINAL name, so distinct folders ("my game" vs "my_game") and the
+  // fallback can never collide onto one save dir (the isolation guarantee).
+  const id =
+    clean && slug === raw ? slug : `${clean ? slug : "game"}-${shortHash(raw)}`;
+  return `/saves/${id}`;
+}
+
+/** Small deterministic hash (FNV-1a, base36) for disambiguating save ids. */
+function shortHash(s: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36).padStart(6, "0").slice(0, 6);
 }

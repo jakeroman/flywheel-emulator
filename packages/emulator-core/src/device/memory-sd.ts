@@ -353,6 +353,103 @@ function _draw()
 end
 `;
 
+/**
+ * A tiny game whose whole point is persistence: hold A to build "charge", let
+ * go to bank it, and your best run is saved to the SD via fw.save — so it
+ * survives powering off, closing the tab, or re-seeding. B wipes the save.
+ */
+const SAVE_DEMO_LUA = `-- Save Demo: your best charge is saved to the SD card and survives a reboot.
+-- fw.save is a per-game key/value store (this game only sees its own saves).
+local charge, best, runs, flash
+
+function _init()
+  best = fw.save.get("best", 0)      -- default 0 the very first time
+  runs = fw.save.get("runs", 0)
+  charge = 0
+  flash = 0
+end
+
+function _update(dt)
+  if fw.btn(fw.A) then
+    charge = charge + dt * 45
+  elseif charge > 0 then
+    -- Released: bank this run, and save a new best if we beat it.
+    local score = math.floor(charge)
+    runs = runs + 1
+    fw.save.set("runs", runs)
+    if score > best then
+      best = score
+      fw.save.set("best", best)
+      flash = 1.0
+      fw.sound.tone(880, 80)
+    end
+    charge = 0
+  end
+  if fw.btnp(fw.B) then
+    fw.save.clear()                  -- erase this game's whole save
+    best, runs = 0, 0
+    fw.sound.tone(200, 120)
+  end
+  if flash > 0 then flash = flash - dt end
+end
+
+function _draw()
+  fw.gfx.cls()
+  fw.gfx.print("SAVE DEMO", 8, 8, true, 2)
+  fw.gfx.print("HOLD A TO CHARGE, RELEASE TO BANK", 8, 34)
+
+  -- Charge meter.
+  local w = math.min(charge, 380)
+  fw.gfx.rect(8, 60, 384, 16)
+  fw.gfx.rectfill(10, 62, w, 12)
+
+  fw.gfx.print("BEST: " .. best, 8, 96, true, 2)
+  fw.gfx.print("RUNS SAVED: " .. runs, 8, 120)
+
+  if flash > 0 then fw.gfx.print("NEW BEST - SAVED!", 8, 150, true, 2) end
+
+  fw.gfx.print("SAVE: " .. fw.save.dir, 8, fw.height - 26)
+  fw.gfx.print("B = ERASE SAVE", 8, fw.height - 14)
+end
+`;
+
+/**
+ * A game written v1-style: it owns its main loop. There is no _update/_draw —
+ * just a top-level `while true` that reads input, draws a frame, and calls
+ * fw.flip() to present it and hand control back to the system until next frame.
+ * The runtime runs this as a coroutine, so the imperative loop never blocks.
+ */
+const LOOP_DEMO_LUA = `-- Loop Demo: this game owns its loop (v1-style). No _update/_draw — a
+-- top-level while-loop draws each frame and fw.flip() presents it.
+local x, y = fw.width / 2, fw.height / 2
+local vx, vy = 96, 66
+
+while true do
+  local dt = fw.dt()                 -- seconds since the last frame
+
+  if fw.btn(fw.LEFT) then x = x - 150 * dt end
+  if fw.btn(fw.RIGHT) then x = x + 150 * dt end
+  if fw.btn(fw.UP) then y = y - 150 * dt end
+  if fw.btn(fw.DOWN) then y = y + 150 * dt end
+
+  x = x + vx * dt
+  y = y + vy * dt
+  if x < 6 then x, vx = 6, -vx; fw.sound.tone(300, 25) end
+  if x > fw.width - 6 then x, vx = fw.width - 6, -vx; fw.sound.tone(300, 25) end
+  if y < 6 then y, vy = 6, -vy; fw.sound.tone(300, 25) end
+  if y > fw.height - 6 then y, vy = fw.height - 6, -vy; fw.sound.tone(300, 25) end
+
+  fw.gfx.cls()
+  fw.gfx.rect(0, 0, fw.width, fw.height)
+  fw.gfx.circfill(x, y, 6)
+  fw.gfx.print("LOOP DEMO", 8, 8, true, 2)
+  fw.gfx.print("A TOP-LEVEL WHILE LOOP + FLIP", 8, 34)
+  fw.gfx.print(string.format("t=%.1f", fw.time()), 8, fw.height - 14)
+
+  fw.flip()                          -- present this frame, resume next frame
+end
+`;
+
 const RIPPLE_GAME_JSON =
   '{ "title": "Ripple (C)", "entry": "main.lua",\n' +
   '  "modules": [{ "name": "fx", "path": "ripple.fwmod" }] }\n';
@@ -392,7 +489,7 @@ function b64ToBytes(s: string): Uint8Array {
  * Seed version. Bump this when the bundled default content changes so existing
  * users (whose SD is persisted in IndexedDB) get the updated demos re-seeded.
  */
-export const SEED_VERSION = 3;
+export const SEED_VERSION = 5;
 
 /** Seed an SD card with the bundled demo games and default system files. */
 export async function seedMockContent(sd: MemorySDCard): Promise<void> {
@@ -405,6 +502,20 @@ export async function seedMockContent(sd: MemorySDCard): Promise<void> {
   sd.mkdirSync("/games/snake", true);
   sd.writeFileSync("/games/snake/main.lua", SNAKE_LUA);
   sd.writeFileSync("/games/snake/meta.lua", 'return { title = "Snake" }\n');
+  // A game that persists data across reboots via fw.save.
+  sd.mkdirSync("/games/save-demo", true);
+  sd.writeFileSync("/games/save-demo/main.lua", SAVE_DEMO_LUA);
+  sd.writeFileSync(
+    "/games/save-demo/meta.lua",
+    'return { title = "Save Demo" }\n',
+  );
+  // A v1-style game that owns its main loop (top-level while + fw.flip).
+  sd.mkdirSync("/games/loop-demo", true);
+  sd.writeFileSync("/games/loop-demo/main.lua", LOOP_DEMO_LUA);
+  sd.writeFileSync(
+    "/games/loop-demo/meta.lua",
+    'return { title = "Loop Demo" }\n',
+  );
   // A C-accelerated demo: a Lua game + its compiled native helper on the SD.
   sd.mkdirSync("/games/ripple", true);
   sd.writeFileSync("/games/ripple/main.lua", RIPPLE_LUA);

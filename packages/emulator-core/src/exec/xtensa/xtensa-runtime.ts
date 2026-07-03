@@ -27,7 +27,12 @@ import type {
 } from "../module-runtime.js";
 import { ArenaMem } from "../mem-access.js";
 import { readBytesAt, readCStringAt, writeBytesAt } from "../wasm-memory.js";
-import { callHalOp, HAL_OP_NAMES, type HalContext } from "../hal-ops.js";
+import {
+  callHalOp,
+  HAL_OP_NAMES,
+  HAL_OP_FLOAT_ARG,
+  type HalContext,
+} from "../hal-ops.js";
 import { XtensaCpu, type OutOfArena } from "./xtensa-cpu.js";
 
 const SENTINEL_BASE = 0x3ff00000; // host fn-pointer sentinels (outside any arena)
@@ -40,10 +45,17 @@ const BUDGET = 2_000_000;
 
 const align16 = (n: number): number => (n + 15) & ~15;
 
+const f32Scratch = new Float32Array(1);
+const i32Scratch = new Int32Array(f32Scratch.buffer);
 const f32Bits = (x: number): number => {
-  const f = new Float32Array(1);
-  f[0] = x;
-  return new Int32Array(f.buffer)[0];
+  f32Scratch[0] = x;
+  return i32Scratch[0];
+};
+/** Reinterpret a 32-bit register value as the float it encodes (call0 soft-float
+ *  passes a float arg as its raw IEEE-754 bits). */
+const bitsToF32 = (bits: number): number => {
+  i32Scratch[0] = bits | 0;
+  return f32Scratch[0];
 };
 
 export class XtensaModuleRuntime implements AcceleratorRuntime {
@@ -126,7 +138,11 @@ export class XtensaModuleRuntime implements AcceleratorRuntime {
       view.setInt32(apiOff + 4, this.gfx.width, true);
       view.setInt32(apiOff + 8, this.gfx.height, true);
       for (let i = 0; i < HAL_OP_NAMES.length; i++) {
-        view.setUint32(apiOff + 12 + i * 4, (SENTINEL_BASE + i * 4) >>> 0, true);
+        view.setUint32(
+          apiOff + 12 + i * 4,
+          (SENTINEL_BASE + i * 4) >>> 0,
+          true,
+        );
       }
       const apiAddr = (base + apiOff) >>> 0;
       this.sp = (base + arena.length - 16) & ~15;
@@ -148,14 +164,20 @@ export class XtensaModuleRuntime implements AcceleratorRuntime {
         if (a === HOST_RETURN) return "stop";
         const slot = (a - SENTINEL_BASE) >> 2;
         if (a >= SENTINEL_BASE && slot < HAL_OP_NAMES.length && (a & 3) === 0) {
-          const r = callHalOp(HAL_OP_NAMES[slot], hal, [
+          const name = HAL_OP_NAMES[slot];
+          const args = [
             cpu.ar[2],
             cpu.ar[3],
             cpu.ar[4],
             cpu.ar[5],
             cpu.ar[6],
             cpu.ar[7],
-          ]);
+          ];
+          // A graphics `fill` arg arrives as raw float bits in its register;
+          // reinterpret it before the op sees it (see HAL_OP_FLOAT_ARG).
+          const fIdx = HAL_OP_FLOAT_ARG[name];
+          if (fIdx !== undefined) args[fIdx] = bitsToF32(args[fIdx]);
+          const r = callHalOp(name, hal, args);
           if (typeof r === "number") cpu.ar[2] = r | 0;
           cpu.pc = cpu.ar[0] >>> 0; // return to caller
           return "continue";
@@ -166,7 +188,8 @@ export class XtensaModuleRuntime implements AcceleratorRuntime {
       this.handler = handler;
 
       // fw_main(api) → guest pointer to fw_module_t {init, update, draw, exports}.
-      const modPtr = this.callFn((base + module.entryOffset) >>> 0, [apiAddr]) >>> 0;
+      const modPtr =
+        this.callFn((base + module.entryOffset) >>> 0, [apiAddr]) >>> 0;
       if (seq !== this.loadSeq) return false;
       if (modPtr === 0) throw new Error("fw_main returned NULL (init failed)");
       this.fns = {
@@ -236,7 +259,8 @@ export class XtensaModuleRuntime implements AcceleratorRuntime {
   callExport(name: string, args: readonly number[] = []): number {
     const addr = this.exportMap.get(name);
     if (addr === undefined) throw new Error(`xtensa: no export "${name}"`);
-    if (this._status !== "running") throw new Error("xtensa: module not running");
+    if (this._status !== "running")
+      throw new Error("xtensa: module not running");
     return this.callFn(addr, args);
   }
 
@@ -280,7 +304,9 @@ export class XtensaModuleRuntime implements AcceleratorRuntime {
         break; // walked off the arena
       }
       if (namePtr === 0) break; // {NULL,NULL} terminator
-      const name = this.arena ? readCStringAt(this.arena, namePtr - this.base) : "";
+      const name = this.arena
+        ? readCStringAt(this.arena, namePtr - this.base)
+        : "";
       if (name) map.set(name, fnAddr);
       p = (p + 8) >>> 0;
     }

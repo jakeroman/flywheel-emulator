@@ -24,6 +24,13 @@ export default defineConfig({
     ],
   },
   server: {
+    // Pin the port: the emulator's SD card (games, saves) lives in the browser's
+    // IndexedDB, which is keyed by origin *including the port*. A stable port
+    // keeps that store — and your games — in one place. strictPort makes startup
+    // fail loudly if 3002 is taken rather than silently switching ports (which
+    // would point the browser at a different, empty IndexedDB).
+    port: 3002,
+    strictPort: true,
     fs: {
       // Allow serving TS source from sibling workspace packages.
       allow: [resolve(here, "..", "..")],

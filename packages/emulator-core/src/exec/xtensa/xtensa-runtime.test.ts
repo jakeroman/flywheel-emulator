@@ -25,6 +25,7 @@ function buildPixelModule(
   const LIT1 = 0x04; // word: address of the fw_module_t table
   const FW = 0x08; // the stored api pointer
   const MODULE = 0x0c; // fw_module_t { init, update, draw } (filled below)
+  const LIT2 = 0x18; // word: 1.0f bits (the fill arg, a float in call0 soft-float)
   const CODE = 0x20; // literals are backward of the code (l32r requirement)
   const PIXEL_OFF = 12 + 3 * 4; // fw_api_t slot 3 (pixel)
 
@@ -59,14 +60,15 @@ function buildPixelModule(
   emit(xasm.l32iN(9, 8, PIXEL_OFF)); // a9 = api->pixel (a sentinel)
   emit(xasm.movi(2, px));
   emit(xasm.movi(3, py));
-  emit(xasm.movi(4, 1)); // on
-  emit(xasm.callx0(9)); // FW->pixel(px,py,1)
+  emit(xasm.l32r(4, base + LIT2, at())); // a4 = 1.0f bits (fill = solid dark)
+  emit(xasm.callx0(9)); // FW->pixel(px,py,1.0f)
   emit(xasm.l32iN(0, 1, 0)); // restore return addr
   emit(xasm.addi(1, 1, 16));
   emit(xasm.retN());
 
   dv.setUint32(LIT0, (base + FW) >>> 0, true);
   dv.setUint32(LIT1, (base + MODULE) >>> 0, true);
+  dv.setUint32(LIT2, 0x3f800000, true); // 1.0f
   dv.setUint32(MODULE + 0, (base + initOff) >>> 0, true);
   dv.setUint32(MODULE + 4, (base + updateOff) >>> 0, true);
   dv.setUint32(MODULE + 8, (base + drawOff) >>> 0, true);
@@ -109,7 +111,7 @@ describe("XtensaModuleRuntime (call0 backend, end-to-end)", () => {
 
     const { framesRun } = runConformance(device, runtime, SCRIPT, recorder);
     expect(framesRun).toBe(SCRIPT.frames.length);
-    // The C/call0 module drove fw_api->pixel(10,20,1) through the interpreter.
+    // The C/call0 module drove fw_api->pixel(10,20,1.0f) through the interpreter.
     expect(device.display.getPixel(10, 20)).toBe(true);
     expect(device.display.getPixel(11, 20)).toBe(false);
 
@@ -147,7 +149,9 @@ describe("XtensaModuleRuntime (call0 backend, end-to-end)", () => {
     }).encode();
     const device = new EmulatedFlywheelDevice();
     const errs: string[] = [];
-    const rt = new XtensaModuleRuntime(device, { onError: (e) => errs.push(e.message) });
+    const rt = new XtensaModuleRuntime(device, {
+      onError: (e) => errs.push(e.message),
+    });
     expect(await rt.load(wrong)).toBe(false);
     expect(rt.status).toBe("error");
     expect(errs[0]).toMatch(/arch/);

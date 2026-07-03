@@ -31,18 +31,120 @@ export interface LuaRuntimeOptions {
    * draw() → fail(), flipping status to "error" so the BIOS can recover.
    */
   functionTimeoutMs?: number;
+  /**
+   * Real monotonic wall-clock in ms, backing `fw.clock()` (profiling). Defaults
+   * to performance.now()/Date.now(); override in tests for a deterministic clock.
+   */
+  now?: () => number;
 }
 
 const DEFAULT_FUNCTION_TIMEOUT_MS = 500;
 
+/**
+ * Installs a per-game `require` that resolves modules to sibling `.lua` files on
+ * the SD (the v1 package.searchers model), sandboxed to the game directory. It
+ * calls back into the host `__fw_load_module(name)` to read the source, caches
+ * the module result, and errors if the file isn't found — it never reaches the
+ * host filesystem. Runs before the game's own source.
+ */
+const REQUIRE_BOOTSTRAP = `do
+  local cache = {}
+  function require(name)
+    if cache[name] ~= nil then return cache[name] end
+    local src = __fw_load_module(name)
+    if src == nil then error("module not found: " .. tostring(name), 2) end
+    local chunk, err = load(src, "@" .. tostring(name))
+    if not chunk then error(err, 2) end
+    local result = chunk()
+    if result == nil then result = true end
+    cache[name] = result
+    return result
+  end
+end`;
+
+/**
+ * Main-loop mode support. A game may own its control flow like v1 — a top-level
+ * `while true do ... fw.flip() end` loop — instead of defining _update/_draw.
+ * This wraps the injected JS `fw` in a Lua table that adds the yielding
+ * primitives (which must be Lua, since only Lua can coroutine.yield): fw.flip()
+ * yields the game's coroutine back to the host (which presents the frame, polls
+ * input, and resumes next frame); fw.gfx.refresh() presents AND yields; fw.wait
+ * / sleep() yield across frames; fw.dt() is the last frame delta. The wrapper
+ * reads through to the JS `fw` via a function __index so we never mutate the
+ * proxy. In callback mode these are no-ops (isyieldable() is false off-coroutine).
+ *
+ * On hardware this maps to a frame-paced task on the APP core: flip() == push the
+ * framebuffer over SPI, then vTaskDelayUntil(next frame) — present, pace, yield.
+ */
+const MAIN_BOOTSTRAP = `do
+  local js = fw
+  local yield = coroutine.yield
+  local yieldable = coroutine.isyieldable
+
+  local function flip()
+    if yieldable() then yield() end
+  end
+
+  local gfx = setmetatable({
+    refresh = function()
+      local r = js.gfx.refresh
+      if r then r() end
+      flip()
+    end,
+  }, { __index = function(_, k) return js.gfx[k] end })
+
+  local function wait(sec)
+    if not yieldable() then return end
+    sec = sec or 0
+    local t = 0
+    repeat
+      yield()
+      t = t + (__fw_dt() or 0)
+    until t >= sec
+  end
+
+  fw = setmetatable(
+    { flip = flip, wait = wait, gfx = gfx, dt = __fw_dt },
+    { __index = function(_, k) return js[k] end }
+  )
+  function sleep(ms) fw.wait((ms or 0) / 1000) end
+end`;
+
+/**
+ * Runs the user chunk inside a coroutine so a top-level loop can yield (fw.flip)
+ * instead of blocking. If the first resume yields, the game owns the loop
+ * ("main" mode) and the host resumes it each frame via __fw_step(); if it
+ * returns, the game uses callbacks ("callback" mode) and the host reads
+ * _update/_draw. __fw_source is set from the host before this runs.
+ */
+const DRIVER = `local chunk, err = load(__fw_source, "@main")
+if not chunk then error(err, 0) end
+__fw_co = coroutine.create(chunk)
+local ok, e = coroutine.resume(__fw_co)
+if not ok then error(e, 0) end
+__fw_mode = coroutine.status(__fw_co) == "suspended" and "main" or "callback"
+function __fw_step()
+  if coroutine.status(__fw_co) ~= "suspended" then return "dead" end
+  local sok, serr = coroutine.resume(__fw_co)
+  if not sok then error(serr, 0) end
+  return coroutine.status(__fw_co)
+end`;
+
 type LuaFn = (...args: unknown[]) => unknown;
 
 /**
- * Runs a Flywheel Lua app against the device. A script defines optional
- * `_init()`, `_update(dt)`, and `_draw()` globals; the host run loop polls the
- * gamepad, then calls update() and draw() each frame. All drawing, input,
- * storage, and audio go through the injected `fw` API, which calls the HAL —
- * so the runtime never touches a canvas or the DOM and is testable in Node.
+ * Runs a Flywheel Lua app against the device, in either of two execution models:
+ *
+ *  - Callback mode: the script defines `_init()`, `_update(dt)`, `_draw()`; the
+ *    host run loop polls the gamepad, then calls update() + draw() each frame.
+ *  - Main-loop mode (v1-style): the script owns control flow with a top-level
+ *    `while true do ... fw.flip() end` loop. It runs as a coroutine that yields
+ *    each frame; the host resumes it once per frame. Auto-detected at load — if
+ *    the chunk yields, it's main mode; if it returns, it's callback mode.
+ *
+ * All drawing, input, storage, and audio go through the injected `fw` API, which
+ * calls the HAL — so the runtime never touches a canvas or the DOM and is
+ * testable in Node.
  */
 export class LuaRuntime {
   private engine: LuaEngine | null = null;
@@ -54,6 +156,13 @@ export class LuaRuntime {
 
   private updateFn: LuaFn | null = null;
   private drawFn: LuaFn | null = null;
+
+  // Main-loop mode: the game's coroutine stepper, the last frame delta it reads
+  // via fw.dt(), and whether its loop has run to completion.
+  private mainMode = false;
+  private stepFn: LuaFn | null = null;
+  private lastDt = 0;
+  private finished = false;
 
   constructor(
     private readonly device: FlywheelDevice,
@@ -75,10 +184,16 @@ export class LuaRuntime {
   async load(
     source: string,
     native: Record<string, AcceleratorRuntime> = {},
+    saveDir?: string,
+    scriptDir?: string,
   ): Promise<boolean> {
     const seq = ++this.loadSeq;
     this.updateFn = null;
     this.drawFn = null;
+    this.mainMode = false;
+    this.stepFn = null;
+    this.finished = false;
+    this.lastDt = 0;
     this.closeEngine();
     if (seq !== this.loadSeq) return false; // superseded during teardown
     this.timeMs = 0;
@@ -114,24 +229,42 @@ export class LuaRuntime {
       device: this.device,
       gfx: this.gfx,
       getTimeMs: () => this.timeMs,
+      now: this.options.now,
       log: (message) => this.callbacks.onLog?.(message),
       native,
+      saveDir,
     });
     engine.global.set("fw", api);
     engine.global.set("print", (...args: unknown[]) =>
       this.callbacks.onLog?.(args.map((a) => stringify(a)).join("\t")),
     );
+    // Per-game `require`: resolve modules to sibling .lua files on the SD.
+    engine.global.set("__fw_load_module", this.moduleLoader(scriptDir));
+    // fw.dt() in main-loop mode reads the last frame delta the host stepped with.
+    engine.global.set("__fw_dt", () => this.lastDt);
 
     try {
-      await engine.doString(source);
-      if (seq !== this.loadSeq) return false; // superseded during doString
-      this.updateFn = asFn(engine.global.get("_update"));
-      this.drawFn = asFn(engine.global.get("_draw"));
+      await engine.doString(REQUIRE_BOOTSTRAP);
+      if (seq !== this.loadSeq) return false;
+      await engine.doString(MAIN_BOOTSTRAP);
+      if (seq !== this.loadSeq) return false;
       this.setStatus("running");
       // Start each app on a clean framebuffer so switching scripts doesn't
-      // leave the previous one's frozen frame on the bistable display.
+      // leave the previous one's frozen frame on the bistable display. (In main
+      // mode the game draws its first frame during the driver's initial resume.)
       this.gfx.clear();
-      asFn(engine.global.get("_init"))?.();
+      // Run the user chunk in a coroutine and detect which model it uses.
+      engine.global.set("__fw_source", source);
+      await engine.doString(DRIVER);
+      if (seq !== this.loadSeq) return false; // superseded during doString
+      if (engine.global.get("__fw_mode") === "main") {
+        this.mainMode = true;
+        this.stepFn = asFn(engine.global.get("__fw_step"));
+      } else {
+        this.updateFn = asFn(engine.global.get("_update"));
+        this.drawFn = asFn(engine.global.get("_draw"));
+        asFn(engine.global.get("_init"))?.();
+      }
       return this._status === "running";
     } catch (error) {
       if (seq === this.loadSeq) this.fail(error);
@@ -139,10 +272,24 @@ export class LuaRuntime {
     }
   }
 
-  /** Advance the script by dtSeconds (calls Lua `_update`). */
+  /**
+   * Advance one frame. In callback mode this calls Lua `_update`; in main-loop
+   * mode it resumes the game's coroutine to its next frame yield (fw.flip).
+   */
   update(dtSeconds: number): void {
     if (this._status !== "running") return;
     this.timeMs += dtSeconds * 1000;
+    if (this.mainMode) {
+      if (!this.stepFn || this.finished) return;
+      this.lastDt = dtSeconds;
+      try {
+        // Resume to the next yield; "dead" means the loop ran to completion.
+        if (this.stepFn() === "dead") this.finished = true;
+      } catch (error) {
+        this.fail(error);
+      }
+      return;
+    }
     if (!this.updateFn) return;
     try {
       this.updateFn(dtSeconds);
@@ -151,10 +298,11 @@ export class LuaRuntime {
     }
   }
 
-  /** Render a frame (calls Lua `_draw`). */
+  /** Render a frame (calls Lua `_draw`). Main-loop games draw inside their own
+   *  loop before each flip, so there is nothing to do here for them. */
   draw(): void {
     if (this._status !== "running") return;
-    if (!this.drawFn) return;
+    if (this.mainMode || !this.drawFn) return;
     try {
       this.drawFn();
     } catch (error) {
@@ -167,8 +315,44 @@ export class LuaRuntime {
     this.loadSeq++; // cancel any in-flight load
     this.updateFn = null;
     this.drawFn = null;
+    this.mainMode = false;
+    this.stepFn = null;
+    this.finished = false;
     this.closeEngine();
     if (this._status !== "idle") this.setStatus("idle");
+  }
+
+  /**
+   * The host side of `require`: map a module name to a sibling `.lua` file's
+   * source under the game's script dir, or undefined if there's no dir or the
+   * name is unsafe/missing. `.lua` is appended if absent; the name is a
+   * "/"-separated path that may not be absolute or contain ".." (no escaping
+   * the game dir).
+   */
+  private moduleLoader(
+    scriptDir: string | undefined,
+  ): (name: unknown) => string | undefined {
+    return (rawName: unknown): string | undefined => {
+      if (!scriptDir) return undefined;
+      let rel = String(rawName ?? "");
+      if (!rel.toLowerCase().endsWith(".lua")) rel += ".lua";
+      if (rel === "" || rel.startsWith("/") || rel.includes("\\")) {
+        return undefined;
+      }
+      const parts = rel.split("/");
+      for (const p of parts) {
+        if (p === "" || p === "." || p === "..") return undefined;
+      }
+      const path = `${scriptDir}/${parts.join("/")}`;
+      try {
+        if (this.device.sd.existsSync(path)) {
+          return this.device.sd.readTextFileSync(path);
+        }
+      } catch {
+        /* unreadable → treat as not found */
+      }
+      return undefined;
+    };
   }
 
   private closeEngine(): void {

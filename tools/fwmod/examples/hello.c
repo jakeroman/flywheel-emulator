@@ -27,14 +27,17 @@ static void update(float dt) {
 }
 
 static void draw(void) {
-    FW->cls(false);
-    FW->rect(8, 8, FW->width - 16, FW->height - 16, true);
-    FW->print("HELLO FROM C", 152, 112, true);
+    FW->cls(0.0f); /* light ground */
+    FW->rect(8, 8, FW->width - 16, FW->height - 16, 1.0f);
+
+    /* A 50%-gray panel: fill 0.5 dithers via the ordered Bayer pattern. */
+    FW->rectfill(40, 80, 120, 48, 0.5f);
+    FW->print("HELLO FROM C", 152, 112, 1.0f);
 
     /* A dot that sweeps across the top to show frames are advancing. */
     int32_t span = FW->width - 40;
     int32_t x = 20 + (ticks % span);
-    FW->circfill(x, 40, 5, true);
+    FW->circfill(x, 40, 5, 1.0f);
 }
 
 static const fw_module_t MODULE = {init, update, draw};
