@@ -37,6 +37,10 @@ const GROUPS: Group[] = [
         sig: "function _draw()",
         desc: "Called every frame after _update. Draw the screen here.",
       },
+      {
+        sig: "fw.exit()",
+        desc: "Quit back to the launcher. The canonical way a game ends — the system does a warm restart to the game selector. Save first (fw.save writes through immediately). Takes effect at the end of the frame.",
+      },
     ],
     example: `local x = 0
 function _update(dt) x = x + 60 * dt end
@@ -85,7 +89,7 @@ end`,
     id: "display",
     title: "Display & input",
     blurb:
-      "The panel is 400×240, 1-bit. Buttons are the D-pad, A, B, and Select — Menu is reserved by the system and never reaches a game.",
+      "The panel is 400×240, 1-bit. Buttons are the D-pad, A, B, and Select. Menu is the system/home button by default — a press returns to the launcher — so it doesn't reach a game unless you claim it with fw.custom_menu_button(true).",
     entries: [
       { sig: "fw.width, fw.height", desc: "Screen size in pixels (400, 240)." },
       {
@@ -99,6 +103,14 @@ end`,
       {
         sig: "fw.btnp(id) → bool",
         desc: "True only on the frame the button goes down (rising edge).",
+      },
+      {
+        sig: "fw.custom_menu_button(on)",
+        desc: "Take over the Menu button. When on, Menu stops returning to the launcher and reaches the game as fw.MENU — you must then provide a way out (fw.exit() or the power switch). Off (default) hands it back.",
+      },
+      {
+        sig: "fw.MENU",
+        desc: "The Menu button id. Only readable via btn()/btnp() after fw.custom_menu_button(true).",
       },
     ],
   },

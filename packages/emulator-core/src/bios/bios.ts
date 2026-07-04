@@ -206,10 +206,11 @@ export class Bios {
     this.gfx.clear();
   }
 
-  /** Return to the game selector (stopping a running game). */
+  /** Return to the game selector. From a running game this is the canonical
+   *  restart (a warm reboot); from a menu/settings screen it's just navigation. */
   returnToMenu(): void {
     if (!this.booted) return;
-    if (this.screen === "game") this.exitGame();
+    if (this.screen === "game") this.restartToMenu();
     else this.setScreen("menu");
   }
 
@@ -275,10 +276,27 @@ export class Bios {
       case "settings":
         this.updateSettings();
         break;
-      case "game":
-        if (gp.wasPressed(Button.Menu)) this.exitGame();
-        else this.active.update(dtSeconds);
+      case "game": {
+        // Menu is the system/home button — a press restarts back to the
+        // launcher — UNLESS a running game claimed it (fw.custom_menu_button).
+        // A dead/errored game's claim doesn't count, so you can always Menu out
+        // of a crash. fw.exit() sets exitRequested, honored after the frame so
+        // we never tear the engine down from inside its own callback.
+        const runningGame = this.active.status === "running";
+        const menuCaptured = runningGame && this.active.capturesMenu === true;
+        // gameWantsExit() is a method call (not a direct property read) so the
+        // flow analyzer re-reads exitRequested after update() mutates it — a
+        // `readonly` property would otherwise stay narrowed across the call.
+        if (this.gameWantsExit()) {
+          this.restartToMenu();
+        } else if (gp.wasPressed(Button.Menu) && !menuCaptured) {
+          this.restartToMenu();
+        } else {
+          this.active.update(dtSeconds);
+          if (this.gameWantsExit()) this.restartToMenu();
+        }
         break;
+      }
     }
 
     this.updatePowerMode();
@@ -550,12 +568,42 @@ export class Bios {
     });
   }
 
-  private exitGame(): void {
+  /**
+   * The canonical game exit: model esp_restart() landing on the launcher.
+   *
+   * A "warm" reboot. On hardware this is a real reset (esp_restart): both cores
+   * restart and the peripherals reset, and the next boot re-initializes RAM — so
+   * the game and any native module get a clean slate no matter what state they
+   * left behind. That's why it's the safe way out of a semi-trusted module, and
+   * why the crash path (a Lua error or native fault) reuses it: exit and
+   * crash-recovery are one path. The SD is non-volatile, so games and fw.save
+   * data survive; only the game's runtime (its "RAM") is torn down. Unlike a
+   * cold power-on (boot()), a warm reboot skips the splash, the charge-on-boot
+   * report, and single-game auto-launch (which would re-run the game we left).
+   */
+  /** Did the running program ask to return to the launcher (fw.exit())? A method
+   *  so each read re-checks the live flag rather than a stale narrowed type. */
+  private gameWantsExit(): boolean {
+    return this.active.exitRequested === true;
+  }
+
+  private restartToMenu(): void {
+    // Free the game + its accelerators (the reset's clean slate) and drop back
+    // to the default backend so no stale runtime pointer can be re-entered.
     void this.active.dispose();
     this.disposeAccelerators();
+    this.active = this.lua;
     this.current = null;
     this.error = null;
     this.idleMs = 0;
+    // Re-scan the SD as a fresh boot would, then land straight on the selector,
+    // preserving the selection where it still points into the list.
+    this.games = scanGames(this.device.sd);
+    this.selected = Math.min(this.selected, Math.max(0, this.games.length - 1));
+    this.booted = true;
+    this.device.power.setEspMode(EspMode.Active);
+    // Always entered from the "game" screen, so this transition emits the new
+    // menu snapshot (fresh games list, cleared game status) to the UI.
     this.setScreen("menu");
   }
 

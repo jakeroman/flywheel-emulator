@@ -164,6 +164,103 @@ describe("Bios", () => {
     void device;
   });
 
+  it("restarts to the launcher when Menu is pressed in a game (default)", async () => {
+    const { device, bios } = await bootedWithGames();
+    await bios.launchScript("/games/snake/main.lua");
+    expect(bios.snapshot().screen).toBe("game");
+    expect(bios.snapshot().gameStatus).toBe("running");
+
+    tap(device, bios, "Menu"); // the system/home button
+    expect(bios.snapshot().screen).toBe("menu");
+    expect(bios.snapshot().gameStatus).toBe("idle"); // the game was torn down
+  });
+
+  it("lets a game claim Menu with fw.custom_menu_button and read it as a button", async () => {
+    const { device, bios } = await bootedWithGames();
+    device.sd.mkdirSync("/games/capture", true);
+    device.sd.writeFileSync(
+      "/games/capture/main.lua",
+      [
+        "function _init() fw.custom_menu_button(true) end",
+        "function _update() if fw.btnp(fw.MENU) then fw.log('got menu') end end",
+        "function _draw() end",
+      ].join("\n"),
+    );
+    const logs: string[] = [];
+    bios.events.on("log", (m) => logs.push(m));
+    await bios.launchScript("/games/capture/main.lua");
+    expect(bios.snapshot().gameStatus).toBe("running");
+
+    tap(device, bios, "Menu");
+    // Menu was NOT the home button: the game kept running and saw the press.
+    expect(bios.snapshot().screen).toBe("game");
+    expect(bios.snapshot().gameStatus).toBe("running");
+    expect(logs).toContain("got menu");
+  });
+
+  it("still exits a game that claimed Menu then crashed (escape hatch)", async () => {
+    // The safety contract: a crashed game's Menu claim is void, so a buggy game
+    // can never trap the user. This is the exact behavior the `runningGame &&`
+    // guard protects — without it, the dead game would eat every Menu press.
+    const { device, bios } = await bootedWithGames();
+    device.sd.mkdirSync("/games/trap", true);
+    device.sd.writeFileSync(
+      "/games/trap/main.lua",
+      [
+        "function _init() fw.custom_menu_button(true) end", // claim Menu...
+        "function _update() error('boom') end", // ...then crash on frame 1
+        "function _draw() end",
+      ].join("\n"),
+    );
+    await bios.launchScript("/games/trap/main.lua");
+    expect(bios.snapshot().gameStatus).toBe("running");
+
+    device.gamepad.poll();
+    bios.update(0.05); // _update throws → status flips to "error"
+    expect(bios.snapshot().gameStatus).toBe("error");
+
+    tap(device, bios, "Menu"); // must STILL exit — the claim is void when dead
+    expect(bios.snapshot().screen).toBe("menu");
+    expect(bios.snapshot().gameStatus).toBe("idle");
+  });
+
+  it("restarts to the launcher when a game calls fw.exit()", async () => {
+    const { device, bios } = await bootedWithGames();
+    device.sd.mkdirSync("/games/quitter", true);
+    device.sd.writeFileSync(
+      "/games/quitter/main.lua",
+      "function _update() fw.exit() end\nfunction _draw() end",
+    );
+    await bios.launchScript("/games/quitter/main.lua");
+    expect(bios.snapshot().gameStatus).toBe("running");
+
+    device.gamepad.poll();
+    bios.update(0.05); // _update calls fw.exit(); honored after the frame
+    expect(bios.snapshot().screen).toBe("menu");
+    expect(bios.snapshot().gameStatus).toBe("idle");
+  });
+
+  it("resets Menu capture for the next game (a fresh load restores the home button)", async () => {
+    const { device, bios } = await bootedWithGames();
+    device.sd.mkdirSync("/games/cap", true);
+    device.sd.writeFileSync(
+      "/games/cap/main.lua",
+      "function _init() fw.custom_menu_button(true) end\nfunction _update() end\nfunction _draw() end",
+    );
+    await bios.launchScript("/games/cap/main.lua");
+    // A plain game that never claims Menu must get the default back.
+    device.sd.mkdirSync("/games/plain", true);
+    device.sd.writeFileSync(
+      "/games/plain/main.lua",
+      "function _update() end\nfunction _draw() end",
+    );
+    await bios.launchScript("/games/plain/main.lua");
+    expect(bios.snapshot().gameStatus).toBe("running");
+
+    tap(device, bios, "Menu");
+    expect(bios.snapshot().screen).toBe("menu"); // home button again
+  });
+
   it("scopes a launched game's fw.save to /saves/<game>", async () => {
     const { device, bios } = await bootedWithGames();
     device.sd.mkdirSync("/games/saver", true);
@@ -276,6 +373,12 @@ describe("Bios", () => {
     expect(bios.snapshot().gameStatus).toBe("running");
     bios.draw();
     expect(litPixels(device)).toBeGreaterThan(0); // the C/wasm module drew
+
+    // A native game has no fw.* API, so it can never claim Menu — the home
+    // button always exits it (capturesMenu is undefined → the default applies).
+    tap(device, bios, "Menu");
+    expect(bios.snapshot().screen).toBe("menu");
+    expect(bios.snapshot().gameStatus).toBe("idle");
     bios.dispose();
   });
 

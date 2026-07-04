@@ -164,6 +164,12 @@ export class LuaRuntime {
   private lastDt = 0;
   private finished = false;
 
+  // System-button state a game can drive: whether it captured the Menu button
+  // (fw.custom_menu_button) and whether it asked to return to the launcher
+  // (fw.exit). Both are read by the BIOS and reset on every load().
+  private menuCaptured = false;
+  private exitReq = false;
+
   constructor(
     private readonly device: FlywheelDevice,
     private readonly callbacks: LuaRuntimeCallbacks = {},
@@ -174,6 +180,18 @@ export class LuaRuntime {
 
   get status(): LuaStatus {
     return this._status;
+  }
+
+  /** Whether the current game took over the Menu button via
+   *  `fw.custom_menu_button(true)`. See ModuleRuntime.capturesMenu. */
+  get capturesMenu(): boolean {
+    return this.menuCaptured;
+  }
+
+  /** Whether the current game called `fw.exit()` to return to the launcher.
+   *  The BIOS polls this after update(). See ModuleRuntime.exitRequested. */
+  get exitRequested(): boolean {
+    return this.exitReq;
   }
 
   /**
@@ -194,6 +212,10 @@ export class LuaRuntime {
     this.stepFn = null;
     this.finished = false;
     this.lastDt = 0;
+    // A fresh game reverts the system-button defaults: Menu is the BIOS home
+    // button again, and no exit is pending.
+    this.menuCaptured = false;
+    this.exitReq = false;
     this.closeEngine();
     if (seq !== this.loadSeq) return false; // superseded during teardown
     this.timeMs = 0;
@@ -233,6 +255,14 @@ export class LuaRuntime {
       log: (message) => this.callbacks.onLog?.(message),
       native,
       saveDir,
+      // fw.custom_menu_button() flips who owns the Menu button; fw.exit() asks
+      // the BIOS to return to the launcher. Both write flags the BIOS reads.
+      setMenuCapture: (on) => {
+        this.menuCaptured = on;
+      },
+      requestExit: () => {
+        this.exitReq = true;
+      },
     });
     engine.global.set("fw", api);
     engine.global.set("print", (...args: unknown[]) =>
@@ -318,6 +348,8 @@ export class LuaRuntime {
     this.mainMode = false;
     this.stepFn = null;
     this.finished = false;
+    this.menuCaptured = false;
+    this.exitReq = false;
     this.closeEngine();
     if (this._status !== "idle") this.setStatus("idle");
   }

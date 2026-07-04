@@ -31,6 +31,22 @@ export interface ModuleRuntime {
   draw(): void;
   /** Release all resources; safe to call more than once. */
   dispose(): void | Promise<void>;
+  /**
+   * Whether the running program has taken over the Menu button. Default (and
+   * absent → false): the BIOS treats Menu as the system/home button and a press
+   * returns to the launcher. A program that opts in (Lua's
+   * `fw.custom_menu_button(true)`) receives Menu like any other button instead.
+   * Only meaningful while `status === "running"`; the BIOS ignores a dead
+   * program's claim so a crashed game can always be Menu'd out of.
+   */
+  readonly capturesMenu?: boolean;
+  /**
+   * Set when the program asked to return to the launcher (Lua's `fw.exit()`).
+   * The BIOS polls this after update() and performs a canonical restart. A flag
+   * rather than a direct call so the request is honored *after* the frame
+   * returns — never tearing down the engine from inside its own callback.
+   */
+  readonly exitRequested?: boolean;
 }
 
 /**

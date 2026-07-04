@@ -70,16 +70,41 @@ describe("LuaRuntime", () => {
     await rt.dispose();
   });
 
-  it("reserves the Menu button (not exposed to games)", async () => {
+  it("keeps Menu as the home button until a game claims it", async () => {
     const device = new EmulatedFlywheelDevice();
     const logs: string[] = [];
     const rt = new LuaRuntime(device, { onLog: (m) => logs.push(m) });
     device.gamepad.press("Menu"); // physically held
     device.gamepad.poll();
     await rt.load(
-      `fw.log(tostring(fw.MENU)); fw.log(tostring(fw.btn("Menu")))`,
+      [
+        `fw.log(tostring(fw.MENU))`, // the id always exists
+        `fw.log(tostring(fw.btn("Menu")))`, // but isn't readable by default
+        `fw.custom_menu_button(true)`, // claim it
+        `fw.log(tostring(fw.btn("Menu")))`, // now it reads the held button
+      ].join("\n"),
     );
-    expect(logs).toEqual(["nil", "false"]); // not exposed, and btn() guarded
+    expect(logs).toEqual(["Menu", "false", "true"]);
+    expect(rt.capturesMenu).toBe(true); // the BIOS sees the claim
+
+    // A fresh load reverts to the default (Menu is the home button again).
+    await rt.load(`fw.log(tostring(fw.btn("Menu")))`);
+    expect(rt.capturesMenu).toBe(false);
+    expect(logs.at(-1)).toBe("false");
+    await rt.dispose();
+  });
+
+  it("exposes fw.exit() as a one-shot request the host reads and clears", async () => {
+    const device = new EmulatedFlywheelDevice();
+    const rt = new LuaRuntime(device, {});
+    await rt.load(`function _update() fw.exit() end`);
+    expect(rt.exitRequested).toBe(false); // nothing asked yet
+    device.gamepad.poll();
+    rt.update(0.016); // _update calls fw.exit()
+    expect(rt.exitRequested).toBe(true);
+    // Reloading (what the BIOS restart does) clears the request.
+    await rt.load(`function _update() end`);
+    expect(rt.exitRequested).toBe(false);
     await rt.dispose();
   });
 

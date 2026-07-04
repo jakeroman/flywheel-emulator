@@ -13,9 +13,13 @@ import { createSaveApi } from "./save-store.js";
  *
  * Layout:
  *   fw.width / fw.height           display size
- *   fw.UP/DOWN/LEFT/RIGHT/A/B/SELECT   button ids (Menu is reserved by the
- *                                      BIOS as the system/home button)
+ *   fw.UP/DOWN/LEFT/RIGHT/A/B/SELECT   button ids (Menu is the system/home
+ *                                      button unless a game claims it)
+ *   fw.MENU                        the Menu button id — only readable after
+ *                                      fw.custom_menu_button(true)
  *   fw.btn(id) / fw.btnp(id)       held / pressed-this-frame
+ *   fw.custom_menu_button(on)      take over Menu (else it returns to the launcher)
+ *   fw.exit()                      return to the launcher (a canonical restart)
  *   fw.gfx.{cls,pixel,line,rect,rectfill,circle,circfill,print,text_width,
  *           blit,refresh}   (draw ops take a fill 0..1: 0=light, 1=dark, gray between)
  *   fw.fs.{read,write,exists,list,mkdir,remove,stat}   resident SD (sync)
@@ -45,6 +49,13 @@ export interface FlywheelApiContext {
   /** This game's save directory, e.g. "/saves/snake". Backs `fw.save`; a game
    *  never sees other games' saves. Defaults to a scratch dir if omitted. */
   saveDir?: string;
+  /** Called by `fw.custom_menu_button(on)`: the game opts in (or out of)
+   *  receiving the Menu button itself. When on, the BIOS stops treating Menu as
+   *  the system/home button for this game. Omit if the host doesn't route Menu. */
+  setMenuCapture?: (enabled: boolean) => void;
+  /** Called by `fw.exit()`: the game asks the system to return to the launcher
+   *  (a canonical restart). The host performs the reboot after the frame. */
+  requestExit?: () => void;
 }
 
 const BUTTON_SET: ReadonlySet<string> = new Set(ALL_BUTTONS);
@@ -62,11 +73,19 @@ export function createFlywheelApi(
   const { device, gfx } = ctx;
   const now = ctx.now ?? defaultNow;
 
-  // Menu is reserved by the BIOS as the system/home button; games never see it.
-  const toButton = (v: unknown): Button | null =>
-    typeof v === "string" && BUTTON_SET.has(v) && v !== Button.Menu
-      ? (v as Button)
-      : null;
+  // Menu is the BIOS system/home button by default, so games never see it —
+  // until one calls fw.custom_menu_button(true), which flips this and lets Menu
+  // be read like any other button. Per-game (a fresh load resets it to false).
+  let menuCaptured = false;
+  const toButton = (v: unknown): Button | null => {
+    if (typeof v !== "string" || !BUTTON_SET.has(v)) return null;
+    if (v === Button.Menu && !menuCaptured) return null;
+    return v as Button;
+  };
+  // Lua truthiness: everything except nil and false is true (0 and "" are
+  // truthy in Lua, unlike JS) — used for the on/off flag args.
+  const luaTruthy = (v: unknown): boolean =>
+    v !== false && v !== undefined && v !== null;
   // Coerce to a finite number; NaN/Infinity → 0 so they can't reach the
   // Bresenham/circle loops (where Infinity would never terminate).
   const n = (v: unknown): number => {
@@ -114,6 +133,9 @@ export function createFlywheelApi(
     A: Button.A,
     B: Button.B,
     SELECT: Button.Select,
+    // The Menu id always exists so games can name it, but btn/btnp only report
+    // it after fw.custom_menu_button(true); otherwise Menu is the home button.
+    MENU: Button.Menu,
 
     btn: (id: unknown): boolean => {
       const b = toButton(id);
@@ -122,6 +144,25 @@ export function createFlywheelApi(
     btnp: (id: unknown): boolean => {
       const b = toButton(id);
       return b ? device.gamepad.wasPressed(b) : false;
+    },
+
+    // Take over the Menu button. By default Menu is the system/home button: a
+    // press returns to the launcher (a canonical restart). Call this with true
+    // and the BIOS stops intercepting Menu — it reaches the game via btn/btnp
+    // (fw.MENU) like any other button, and it's the game's job to offer a way
+    // out (fw.exit() or the power switch). Call with false to hand it back.
+    // No argument means opt in.
+    custom_menu_button: (enabled?: unknown): void => {
+      menuCaptured = enabled === undefined ? true : luaTruthy(enabled);
+      ctx.setMenuCapture?.(menuCaptured);
+    },
+
+    // Return to the launcher. The canonical way a game quits: the system reboots
+    // (a warm restart) back to the game selector. Save first (fw.save writes
+    // through immediately, so anything already set is safe). Takes effect at the
+    // end of the current frame.
+    exit: (): void => {
+      ctx.requestExit?.();
     },
 
     gfx: {
